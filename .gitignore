@@ -1,0 +1,25 @@
+# Data protection: no respondent-level data, no renders, no outputs in this repository
+*.xlsx
+*.xls
+*.csv
+*.sav
+*.dta
+*.rds
+*.RData
+*.rdb
+*.rdx
+*.fst
+
+# Renders, tables and figures (written to ../../html, ../../tables, ../../appendix, ../../figures)
+*.html
+*.docx
+*.pdf
+*.png
+*_cache/
+*_files/
+
+# R / RStudio / macOS
+.Rhistory
+.RData
+.Rproj.user/
+.DS_Store
