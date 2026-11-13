@@ -2209,6 +2209,7 @@ build_gender_plotdata <- function(data = d) {
 }
 
 plotdat <- build_gender_plotdata(d)
+d_gender <- copy(d)   # RV1: kept for chunk gender-table (later chunks overwrite d)
 plotdat <- plotdat[grep("All respondants", group)]
 
 plotdat[, group := ifelse(!grepl("skip", metric, ignore.case = TRUE),
@@ -2515,7 +2516,8 @@ ggsave(PATH, width = 5, height = 3, dpi = 300)
 ## gender breakdown of shopper/skipper (table)
 
 ```{r gender-table}
-# d already has: id, weightr, multi_person, fshare_shopper, fshare_skipper
+d <- copy(d_gender)   # RV1: d from chunk gender-shopper-skipper (overwritten in between)
+# d has: id, weightr, multi_person, fshare_shopper, fshare_skipper
 # Attach respondent gender
 d[, gender := dt[match(d$id, dt$id), gender]]
 
