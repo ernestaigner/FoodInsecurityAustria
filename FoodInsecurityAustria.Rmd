@@ -76,6 +76,7 @@ Added (section "Technical appendix")
  - tetrachoric correlations of social/provisioning items
  - Rasch validation tables by mode
  - Figure 5 among the respondents who were asked (n ~ 101)
+ - sensitivity of Section 4.2 to the module omission: observed vs imputed shares, bounds
 All appendix additions are written to ../../appendix/.
 -->
 
@@ -3107,6 +3108,81 @@ if (length(num_vars)) knitr::include_graphics(file.path(DIR_APP, "imputation_den
 kable(fig5_101_tab, caption = "Figure 5 among the respondents who were asked (wish to change the diet)")
 ```
 
+### E.2 Sensitivity of Section 4.2 to the module omission
+
+*Reviewer 2, major 3: the 22 moderate/severe respondents who did not receive the FI-specific module (see A.3).*
+
+The shares of Section 4.2 are based on the 165 moderate/severe respondents who received the module. Here the
+module answers of the 22 who did not receive it are multiply imputed, so the shares refer to all 187. Each
+category or item shown in Section 4.2 is coded 1 (chosen / named) or 0, as in the figure chunks, and imputed by
+predictive mean matching from survey mode, raw score and the individual and household characteristics
+(`r M_IMP` imputations; indicators imputed separately, so shares are marginal). Since no phone respondent with raw
+score 8 received the module, their answers rest on the assumption that the relationship between severity and the
+answers is the same in both modes. The bounds need no assumption: all 22 coded 0 (lower) or 1 (upper).
+Figure 1 (shares of named household members) is not included.
+
+```{r rv1-module-sensitivity}
+# Indicator per category / item of Section 4.2 (1 = chosen / named), defined as in the figure chunks
+ind <- function(Q, key, label, figure, multiple = FALSE) {
+  rows <- if (multiple) dtl[grepl(Q, qid) & itlb == "genannt" & qlb %chin% key] else dtl[grepl(Q, qid) & itlb %chin% key]
+  if (!nrow(rows)) return(NULL)
+  data.table(figure = figure, item = gsub("\n", " ", label), id = unique(rows$id))
+}
+ind_long <- rbindlist(c(
+  list(ind("f14", c("ja, in der Woche vor der Auszahlung der Sozialhilfe / des Gehalts",
+                    "ja, in den Tagen vor der Auszahlung der Sozialhilfe / des Gehalts"),
+           "More attention to prices before payday", "Text: price attention")),
+  Map(ind, "f22", names(trans_f22), trans_f22, "Figure 2"),
+  Map(ind, "f23", names(trans_f23), trans_f23, "Figure 3"),
+  Map(ind, "f25", names(f25_translations), f25_translations, "Figure 4a", multiple = TRUE),
+  Map(ind, "f28", names(f28_translations), f28_translations, "Figure 4b", multiple = TRUE),
+  list(ind("f30", "Ja", "Wants to change the diet", "Text: agency"),
+       ind("f32", c("eher stark", "sehr stark"), "Ability to change the diet rather high or high", "Text: agency")),
+  Map(ind, "f31", items$qlb, fcoalesce(unname(translate_qlb[items$qlb]), items$qlb), "Figure 5", multiple = TRUE)))
+ind_long[, var := sprintf("v%02d", .GRP), by = .(figure, item)]
+vars <- unique(ind_long[, .(figure, item, var)])
+
+# Moderate/severe respondents: covariates from A.3, indicators (NA = module not received)
+ms <- mc[mod_sev == TRUE, c("id", "mode", "raw_score", "received", comp_vars), with = FALSE]
+ms[, mode := factor(mode)]
+ms[, weightr := dt[match(ms$id, dt$id), weightr]]
+ms[, (vars$var) := lapply(vars$var, function(v) as.integer(ms$id %in% ind_long[var == v, id]))]
+ms[received == FALSE, (vars$var) := NA_integer_]
+stopifnot(ms[, sum(received)] == dt[, sum(descr_sample)])
+vars <- vars[vapply(var, function(v) uniqueN(na.omit(ms[[v]])) > 1, logical(1))]   # items nobody (or everybody) named cannot be imputed
+
+# Imputation: indicators from survey mode, raw score and characteristics only
+cov_vars <- c("mode", "raw_score", comp_vars)
+ms_imp <- as.data.frame(ms[, c(cov_vars, vars$var), with = FALSE])
+pred <- make.predictorMatrix(ms_imp)
+pred[, ] <- 0
+pred[, cov_vars] <- 1
+diag(pred) <- 0
+meth <- make.method(ms_imp)
+meth[vars$var] <- "pmm"
+imp_mod <- mice(ms_imp, m = M_IMP, maxit = 10, method = meth, predictorMatrix = pred,
+                seed = 123, printFlag = FALSE)
+
+# Weighted shares (respondent weights as in Section 4.2): observed, imputed, bounds
+w_share <- function(d, w) unname(sapply(vars$var, function(v) sum(d[[v]] * w) / sum(w) * 100))
+rec     <- ms[received == TRUE]
+obs     <- w_share(rec, rec$weightr)
+imputed <- rowMeans(sapply(seq_len(imp_mod$m), function(k) w_share(mice::complete(imp_mod, k), ms$weightr)))
+lower   <- unname(sapply(vars$var, function(v) sum(rec[[v]] * rec$weightr) / sum(ms$weightr) * 100))
+upper   <- lower + ms[received == FALSE, sum(weightr)] / sum(ms$weightr) * 100
+
+module_sens <- data.table(vars[, .(figure, item)],
+                          observed = round(obs, 1), imputed = round(imputed, 1),
+                          `imputed - observed` = round(imputed - obs, 1),
+                          bounds = sprintf("%.1f-%.1f", lower, upper))
+max_diff <- module_sens[, max(abs(`imputed - observed`))]
+kable(module_sens, caption = sprintf("Section 4.2 shares (weighted %%): observed (n = %d) vs imputed and bounds (n = %d)",
+                                     nrow(rec), nrow(ms)))
+```
+
+Largest difference between observed and imputed shares: **`r max_diff`** percentage points.
+
+
 ## Export
 
 ```{r rv1-export}
@@ -3134,7 +3210,8 @@ rv1_tables <- c(
        "D.3 Imputation: convergence (R-hat)" = rhat,
        "D.4 Imputation: number of imputations needed (von Hippel 2020)" = imp_check,
        "D.5 Imputation: observed vs imputed values" = imp_cmp,
-       "E.1 Figure 5 among the respondents who were asked (wish to change the diet)" = fig5_101_tab))
+       "E.1 Figure 5 among the respondents who were asked (wish to change the diet)" = fig5_101_tab,
+       "E.2 Section 4.2 shares: observed vs imputed for the respondents without the FI-specific module, and bounds" = module_sens))
 
 doc <- new_landscape_doc()
 for (k in seq_along(rv1_tables)) {
