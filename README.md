@@ -42,7 +42,7 @@ All paths are set at the top of the setup chunk (`DIR_DATA`, `DIR_FIES`, ...) re
 # standard render: loads the stored imputations           -> ../../html
 Rscript -e 'rmarkdown::render("FoodInsecurityAustria.Rmd", output_dir = "../../html")'
 
-# run the multiple imputation again (3 samples x 20 imputations)
+# run the multiple imputation again (3 samples x 40 imputations x 40 iterations)
 Rscript -e 'rmarkdown::render("FoodInsecurityAustria.Rmd", params = list(reimpute = TRUE), output_dir = "../../html")'
 
 # the same as a background run: keeps the Mac awake, continues when the terminal is closed
@@ -50,11 +50,11 @@ nohup caffeinate -i Rscript -e 'rmarkdown::render("FoodInsecurityAustria.Rmd", p
 tail -f ../../html/render.log
 ```
 
-Knitting in RStudio uses `reimpute = FALSE`.
+Knitting in RStudio uses the defaults (`reimpute = FALSE`, `m_imp = 40`, `maxit_imp = 40`). To render with stored imputations made with other settings, pass them, e.g. `params = list(m_imp = 20, maxit_imp = 10)`.
 
 ## Imputation
 
-Missing values in non-FIES items are imputed with `mice` (20 imputations per sample: full, phone, online) and the weights are raked within each imputed dataset. The result is stored in `../../data/imputation/imputations_rv1.rds` and loaded on later renders. Render with `reimpute = TRUE` whenever the data preparation, the imputation model (`imp_vars`) or the raking (`RAKE_VARS`, `RAKE_ON_MODE`) changes. The render stops if model or raking differ from the stored imputations; changes in the data preparation are not detected.
+Missing values in non-FIES items are imputed with `mice` (40 imputations with 40 iterations per sample: full, phone, online; `M_IMP`, `MAXIT_IMP`, chosen with the checks in the appendix: von Hippel 2020, R-hat) and the weights are raked within each imputed dataset. The result is stored in `../../data/imputation/imputations_rv1.rds` and loaded on later renders. Render with `reimpute = TRUE` whenever the data preparation, the imputation model (`imp_vars`), the imputation settings or the raking (`RAKE_VARS`, `RAKE_ON_MODE`) changes. The render stops if model, settings, raking or the number of missing values per imputed variable differ from the stored imputations; other changes in the data preparation are not detected.
 
 ## FIES calibration
 
