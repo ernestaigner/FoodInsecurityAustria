@@ -6,49 +6,82 @@ output:
     theme: readable
   pdf_document:
     toc: yes
-title: "Analysis"
+title: "Food insecurity in Austria - analysis"
 always_allow_html: yes
+params:
+  reimpute: FALSE   # TRUE: run the multiple imputation again instead of loading the stored one
 editor_options:
   chunk_output_type: console
 ---
 
+<!--
+RV1 (October 2026) - changes against FoodPovertyAnalysis-2_Jun23_2248.Rmd.
+All edits are marked "# RV1:" in the code. No knitr cache: the imputations are
+stored in ../../data/imputation and reused (see chunk run-all, params$reimpute).
+Paths are relative to this repository (analysis/FoodInsecurityAustria); see README.md.
+
+Fixes
+ 1. Rasch validation by mode: affirmative shares used the pooled n (346) for all
+    modes; now the mode-specific n. Tables are stored per mode (rasch_val).
+ 2. Weights: Table 2 uses household-referenced weights (switch UNIT, default
+    "individuals" = raked weight x household size, FAO convention); Table 3
+    keeps respondent weights (respondent-level items).
+ 3. Raking: age added to the raking margins (was missing); mode stays unraked
+    (switch RAKE_ON_MODE).
+ 4. 95% CIs added to all PPCs (Tables 2 and 3).
+ 5. Survey method stays in the IH adjustment set but is no longer shown as a
+    'factor' row in manuscript Table 2 (SHOW_MODE_ROW_IN_MS).
+ 6. Fully adjusted specification relabelled "net-of" (was "SEM").
+ 7. Table 3 block p-values: caption now states that they test the block as
+    predictors of FI status (direction differs from the item rows).
+ 8. Complete-case tables: N (NA) taken from the complete-case frame (was the
+    full sample, with "(0)" hard-coded in the total row).
+ 9. Figure 5: denominator = respondents who want to change their diet
+    (n ~ 101), not all FI-module respondents (n = 165).
+10. plz_manual: 11 postcodes vs 10 ids (recycled); 9455 dropped (set NA anyway).
+
+Removed (unused downstream): duplicate/unused libraries, stargazer2, colour
+palette, unused weight columns (weightp/up/m/mp/po/pt/fp*), the eu_/ea_ coding
+block and its weights, r_alleiner, officer template doc, diet pattern, beta
+outcome transforms, label/order helpers never called, LASSO selection
+(was switched off), commented-out code, clipboard table helper, unused figure
+parameters (BOX/GES/FIGH/WRAP/...).
+
+Added (section "RV1: additional outputs for the technical appendix")
+ - raking targets and weight diagnostics; composition by mode
+ - missing FIES items by mode; the 180 exclusions compared with retained cases
+ - FI-module coverage (programming error, 22 cases)
+ - sensitivity of the pooled prevalence (weights, mode shares, calibration)
+ - numbers for the survey-mode paragraph; gradient concordance across modes
+ - imputation diagnostics; tetrachoric correlations of social/provisioning items
+ - Rasch validation tables by mode
+All appendix additions are written to ../../appendix/.
+-->
+
 # Setup
 
 ```{r setup}
-knitr::opts_chunk$set(cache = TRUE)
+# RV1: no knitr cache. Chunks that modify data.tables by reference (:=) lose
+# their changes when restored from the cache; the imputations are stored as .rds
+# instead (chunk run-all).
+knitr::opts_chunk$set(cache = FALSE)
 
+# RV1: duplicates and unused packages removed
 library(data.table)
 library(ggokabeito)
 library(mice)
-library(miceadds)
 library(future)
 library(survey)
-library(marginaleffects)
 library(readxl)
 library(stringr)
 library(ggplot2)
-library(ggtext)
-library(viridis)
 library(scales)
 library(knitr)
 library(extrafont)
 library(flextable)
-library(ggpattern)
-library(stargazer)
-library(tidyverse)
 library(officer)
-library(ggforce)
-library(clipr)
 library(openxlsx)
-library(data.table)
-library(mice)
-library(survey)
-library(marginaleffects)
-library(future)
-library(clipr)
-library(officer)
-library(flextable)
-library(openxlsx)
+library(RM.weights)
 
 plan(multisession, workers = parallelly::availableCores() - 1)
 options(future.globals.maxSize = 2 * 1024^3)
@@ -60,41 +93,23 @@ point <- format_format(big.mark = " ", decimal.mark = ".", scientific = FALSE)
 DIR_DATA <- "../../data"        # survey data (never in git)
 DIR_FIES <- "../../FIES"        # FIES calibration workbooks (Excel round trip)
 DIR_DIST <- "../../distances"   # walking distances by municipality
+DIR_IMP  <- file.path(DIR_DATA, "imputation")   # stored imputations (params$reimpute)
 DIR_TAB  <- "../../tables"      # manuscript tables, variable overview
 DIR_APP  <- "../../appendix"    # technical-appendix tables and diagnostics
 DIR_FIG  <- "../../figures"     # figures
-for (d in c(DIR_TAB, DIR_APP, DIR_FIG)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+for (d in c(DIR_IMP, DIR_TAB, DIR_APP, DIR_FIG)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 
 # Datei mit daten
 FILENAME <- file.path(DIR_DATA, "data_expl.xlsx")
-# Datei mit Methode
-FILENAME2 <- file.path(DIR_DATA, "data.xlsx")
 
-FSIZE=15
 
 # Chunk output set
 knitr::opts_chunk$set(
-  comment = "#>", echo = T, warning=F, dev="png",fig.width = 16*.8, fig.height = 9*.8, fig.align = "center"
+  # RV1: code hidden (echo = FALSE, message = FALSE)
+  comment = "#>", echo = FALSE, message = FALSE, warning=F, dev="png",fig.width = 16*.8, fig.height = 9*.8, fig.align = "center"
 )
 
-# Farben
-COLORS <-   paste0("#",c("67726B","E9B500","4FA9CB","E53517","79B51C","A3ACA6","FFDA59","95CBE0","F18572","B3E763","C1C7C4","FFE690","B9DDEA","F6AEA1","CCEF97"))
-COLORS1 <- paste0("#",c("893BC3", "AC75D5","DAC2EC"))
-COLORS <-c(COLORS,COLORS1)[c(2,7,12,3,8,13,4,9,14,5,10,15,16,17,18,1,6,11)]
-COLORP <- ggplot(data.table(group=1:length(COLORS),value=10),aes(y=value,x=as.factor(group),fill=as.factor(group)))+geom_bar(stat="identity")+scale_fill_manual(values=COLORS)
 
-# Oddsratio Stargazer
-stargazer2 <- function(model, odd.ratio = FALSE, ...) {
-  if(!("list" %in% class(model))) model <- list(model)
-  if (odd.ratio) {
-    coefOR2 <- lapply(model, function(x) round(exp(stats::coefficients(x)),2))
-    seOR2 <- lapply(model, function(x) round(exp(stats::coefficients(x)) * summary(x)$coef[, 2],2))
-    p2 <- lapply(model, function(x) round(summary(x)$coefficients[, 4],2))
-    stargazer::stargazer(model, coef = coefOR2, se = seOR2, p = p2, ...)
-  } else {
-    stargazer::stargazer(model, ...)
-  }
-}
 
 # Tabelle mit den jeweiligen Bezeichnungen
 lb <- data.table(readxl::read_xlsx(FILENAME,2))
@@ -196,90 +211,12 @@ levels(dt$r_methode) <- lb[qid=="r_methode",itlb]
 lb[qid=="bundesland",qid:="r_bundesland"]
 dt[,r_bundesland:=factor(bundesland,levels=lb[qid=="r_bundesland",itid])]
 levels(dt$r_bundesland) <- lb[qid=="r_bundesland",itlb]
-##  Alleinerzieher_innen
-dt[,r_alleiner:=as.numeric(as.numeric(gsub("\\D","",r_personen))-as.numeric(gsub("\\D","",r_kinder))==1&r_personen!="5 oder mehr Personen")]
-dt[,.N,r_alleiner]
-dt[r_kinder=="kein Kind",r_alleiner:=2]
-dt[is.na(r_alleiner),r_alleiner:=3]
-dt[,r_alleiner:=r_alleiner+1]
-dt[,r_alleiner:=factor(r_alleiner,labels=lb[qid=="r_alleiner",itlb])]
-
-## Haushaltsgröße numerisch (einmalig, wird in FAO Auswertung verwendet)
-dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]
 
 
-# Gewichtungen
-dt[,weightp:=weight/sum(weight)*100]
-## Gewichtung mit Urban in Prozent (wird soweit nicht verwendet)
-dt[,weightup:=weightu/sum(weightu)*100]
-## add online offline weight
-dt_to <- data.table(readxl::read_xlsx(FILENAME2,1,skip = 1))
-dt[,weightm:=dt_to[match(dt$id,dt_to$ID),ifelse(r_methode=="Telefon",gew_telefon,gew_online)]]
-dt[,weightmp:=weightm/sum(weightm)*100,r_methode]
-## offline online eigene spalten
-dt[,weightpo:=ifelse(r_methode=="Online",weightmp,NA)]
-dt[,weightpt:=ifelse(r_methode=="Telefon",weightmp,NA)]
-## weight für familien
-dt[!as.character(r_kinder)%chin%c("kein Kind","keine Angabe"),weightfp:=weight/sum(weight)*100]
-dt[!as.character(r_kinder)%chin%c("kein Kind","keine Angabe")&r_methode=="Online",weightfpo:=weight/sum(weight)*100]
-dt[!as.character(r_kinder)%chin%c("kein Kind","keine Angabe")&r_methode=="Telefon",weightfpt:=weight/sum(weight)*100]
 
-# Ernährungsarmut kodieren
-# Vereinheitlichung, so dass ja=1 und Nein/Weißnicht = 0.
-## FAO Labels
-faoLB <- tolower(c("WORRIED","HEALTHY","FEWFOOD","SKIPPED","ATELESS","RUNOUT","HUNGRY","WHLDAY"))
-## Kinder/Jugendliche
-dt[,ea_kind:=ifelse(f8==2,1,0)]
-## FAO Kriterien
-dt[,(paste0("ea_fao",1:8,"_",faoLB)):=lapply(.SD,function(x) ifelse(x==2,1,0)),.SDcols=grep("f9_",names(dt),value = T)]
-## soziale
-dt[,(paste0("ea_soz",1:4)):=lapply(.SD,function(x) ifelse(x==1,1,0)),.SDcols=grep("f9b_2|f9b_3|f9b_4|f9b_5",names(dt),value = T)]
-## Lebensmittelhandel (später nicht verwendet)
-dt[,(paste0("ea_lmk",1:3)):=lapply(.SD,function(x) ifelse(x==1,1,0)),.SDcols=grep("f11_5|f11_6|f11_9",names(dt),value = T)]
-## Kantine (später nicht verwendet)
-dt[,(paste0("ea_kt")):=lapply(.SD,function(x) ifelse(x==1,1,0)),.SDcols=grep("f13_3",names(dt),value = T)]
+# RV1: unused weight columns (weightp/up/m/mp/po/pt/fp*) removed
 
-# Ernährungsunsicherheit (so wie dann bei der Auswertung verwendet)
-## Kinder u. Jugend
-dt[,eu_kj:=rowSums(.SD,na.rm=T)==1,.SDcols=grep("ea_kind",names(dt),value=T)]
-## Materielle Ernährungsarmut
-dt[,eu_ml:=between(rowSums(.SD,na.rm=T),1,4),.SDcols=grep("ea_fao",names(dt),value=T)]
-dt[,eu_mm:=between(rowSums(.SD,na.rm=T),5,7),.SDcols=grep("ea_fao",names(dt),value=T)]
-dt[,eu_ms:=between(rowSums(.SD,na.rm=T),8,8),.SDcols=grep("ea_fao",names(dt),value=T)]
-## Soziale Ernährungsarmut
-dt[,eu_sl:=between(rowSums(.SD,na.rm=T),1,3),.SDcols=grep("ea_soz",names(dt),value=T)]
-dt[,eu_ss:=between(rowSums(.SD,na.rm=T),4,4),.SDcols=grep("ea_soz",names(dt),value=T)]
-## Irgendeine Art von Betroffenheit.
-dt[,eu_any:=rowSums(.SD,na.rm=T)>0,.SDcols=grep("eu_",names(dt),value=T)]
-cols <-grep("eu_",names(dt),value=T)
-dt[,(cols):=lapply(.SD,function(x) ifelse(x,1,0)),.SDcols=cols]
-
-### Spalten für Kinder/Jugen, Soziale und Materielle Ernährungsarmut
-## eu_kijug
-dt[,eu_kijug:=f8]
-dt[is.na(eu_kijug),eu_kijug:=5]
-## eu_sozial
-dt[,eu_soz:=ifelse(eu_sl==1,1,NA)]
-dt[,eu_soz:=ifelse(eu_ss==1,2,eu_soz)]
-dt[,eu_soz:=ifelse(is.na(eu_soz),3,eu_soz)]
-## eu_materiel
-dt[,eu_mat:=ifelse(eu_ml==1,1,NA)]
-dt[,eu_mat:=ifelse(eu_mm==1,2,eu_mat)]
-dt[,eu_mat:=ifelse(eu_ms==1,3,eu_mat)]
-dt[,eu_mat:=ifelse(is.na(eu_mat),4,eu_mat)]
-## eu any
-dt[,eu_any_sample:=!is.na(f16)&eu_any==T]
-## eu weights
-dt[eu_any_sample==1,weighteuanyp:=weight/sum(weight)*100]
-dt[eu_any_sample==1,weighteuanymp:=weightm/sum(weightm)*100,r_methode]
-dt[,weighteuanypo:=ifelse(r_methode=="Online"&eu_any_sample==1,weighteuanymp,NA)]
-dt[,weighteuanypt:=ifelse(r_methode=="Telefon"&eu_any_sample==1,weighteuanymp,NA)]
-## eu mat weight
-dt[eu_mat!=4,weighteumatp:=weight/sum(weight)*100]
-dt[eu_soz!=3,weighteusozp:=weight/sum(weight)*100]
-dt[eu_kijug!=5,weighteukijugp:=weight/sum(weight)*100]
-
-dt[,eu_any_sample:=as.numeric(eu_any_sample)]
+# RV1: eu_/ea_ coding (earlier descriptive analysis) removed - not used downstream
 dt[,f15_oth:=as.character(f15_oth)]
 dt[,f37_oth:=as.character(f37_oth)]
 
@@ -306,18 +243,12 @@ for (i in colsid) tmp[names(dt)[i]] <-
 tmp <- as.data.table(tmp)
 dt <- cbind(dt[,-colsid,with=F],tmp)
 
-## Spaltenreihenfolge: id, r_*, eu_*, ea_*, weights, f*
+## Spaltenreihenfolge: id, r_*, weights, f*
 dt <- cbind(
   dt[,grep("id|^r_",names(dt),value=T),with=F],
-  dt[,grep("^eu_",names(dt),value=T),with=F],
-  dt[,grep("^ea_",names(dt),value=T),with=F],
   dt[,grep("^wei",names(dt),value=T),with=F],
   dt[,grep("^f",names(dt),value=T),with=F]
 )
-
-template <- system.file(package = "officer",
-  "doc_examples", "landscape.docx")
-doc <- doc_2 <- read_docx(path = template)
 
 ```
 # FAO Berechnung
@@ -325,13 +256,8 @@ doc <- doc_2 <- read_docx(path = template)
 ## FAO Berechnung Gesamt
 
 ```{r}
-library(RM.weights)
-library(openxlsx)
-
 SAMPLE <- "Gesamt"
 dtfao <- dt[,c(grep("f9_",names(dt),value=T),"id","weight"),with=F]
-# SAMPLE <- "Online"
-# dtfao <- dt[,c(grep("f9_",names(dt),value=T),"id","weight"),with=F]
 
 # set up file
 ## calculate raw scores
@@ -344,7 +270,7 @@ dtfao[,rs:=rowSums(.SD),.SDcols=cols]
 ## code cases for validation and callibration
 dtfao[,valid:=!is.na(rs)&rs!=0&rs!=8]
 ## add hsize
-dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]
+dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]  # RV1: restored - setup column reordering drops hsize
 dtfao[,hsize:=dt[match(dtfao$id,dt$id),hsize]]
 ## table on hsize and rs
 dtfao[,.N,.(hsize,rs)][order(-hsize)]
@@ -362,7 +288,6 @@ rbind(`valid percent`=unlist(lapply(dtfao[,1:8],fun.sum))/dim(dtfao)[1]*100,
 `valid n`=unlist(lapply(dtfao[,1:8],fun.sum)))
 ## 8. sample size validation
 dtfao[,.N,valid]
-## write.table(data.table(tmp)[,lapply(.SD,round,2)],"clipboard",sep="\t")
 
 ## VALIDATION
 AT_VAL <- RM.w(as.matrix(dtfao[valid==T,grep("f9_",names(dtfao)),with=F])
@@ -376,13 +301,17 @@ tmp <- data.table(label=c("WORRIED","HEALTHY","FEWFOOD","SKIPPED","ATELESS","RAN
            infit=round(AT_VAL$infit,2),
            outfit=round(AT_VAL$outfit,2),
 `affirmitive responses`= aff_res,
-`affirmitive responses (share)`= round(aff_res/346*100,2))
+`affirmitive responses (share)`= round(aff_res/dtfao[valid==T,.N]*100,2))  # RV1: mode-specific n (was /346 for all modes)
 tmp
-# write.table(tmp, "clipboard", sep="\t", row.names=FALSE)
 ## Residual correclation
 abs(AT_VAL$res.corr)>.4
 ## rasch reliab
 c("reliability:",round(AT_VAL$reliab,3))
+# RV1: keep validation per sample for the appendix (RV0 appendix duplicated phone/online)
+if (!exists("rasch_val")) rasch_val <- list()
+rasch_val[[SAMPLE]] <- list(items = tmp, reliability = AT_VAL$reliab,
+                            n_valid = dtfao[valid==T,.N],
+                            rescorr_04 = which(abs(AT_VAL$res.corr) > .4 & upper.tri(AT_VAL$res.corr), arr.ind = TRUE))
 
 
 ## KALIBRATION
@@ -407,7 +336,6 @@ saveWorkbook(wb,file = file.path(DIR_FIES, paste0("FIES_",SAMPLE,".xlsx")),overw
 
 ## read excel file after calibration
 wb <- loadWorkbook(file.path(DIR_FIES, paste0("FIES_",SAMPLE,"c.xlsx")))
-# system(paste0("open FIES/FIES_",SAMPLE,"c.xlsx"))
 ## Indicators
 # 13. NA cases
 dtfao[is.na(rs),.N]
@@ -428,7 +356,6 @@ readWorkbook(wb,1,rows=38:39,cols=8:9,colNames = F)
 ## read probabilities
 prob_fies <- data.table(readWorkbook(wb,1,rows=40:50,cols=c(6,8:9),colNames = T))
 prob_fies[,lapply(.SD,round,2)]
-# write.table(prob_fies[,lapply(.SD,round,2)],"clipboard",sep="\t",row.names=FALSE)
 setnames(prob_fies,c("rs","p_ms","p_s"))
 ## prevalence rates
  data.table(readWorkbook(wb,1,rows=40:41,cols=c(10:11),colNames = T))[,lapply(.SD,round,4)]
@@ -449,11 +376,6 @@ cat("Severe threshold: rs >=", threshold_rs_s, "\n")
 
 ```{r}
 
-
-
-library(RM.weights)
-library(openxlsx)
-
 SAMPLE <- "Online"
 dtfao <- dt[r_methode=="Online",c(grep("f9_",names(dt),value=T),"id","weight"),with=F]
 
@@ -468,7 +390,7 @@ dtfao[,rs:=rowSums(.SD),.SDcols=cols]
 ## code cases for validation and callibration
 dtfao[,valid:=!is.na(rs)&rs!=0&rs!=8]
 ## add hsize
-dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]
+dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]  # RV1: restored - setup column reordering drops hsize
 dtfao[,hsize:=dt[match(dtfao$id,dt$id),hsize]]
 ## table on hsize and rs
 dtfao[,.N,.(hsize,rs)][order(-hsize)]
@@ -486,7 +408,6 @@ rbind(`valid percent`=unlist(lapply(dtfao[,1:8],fun.sum))/dim(dtfao)[1]*100,
 `valid n`=unlist(lapply(dtfao[,1:8],fun.sum)))
 ## 8. sample size validation
 dtfao[,.N,valid]
-## write.table(data.table(tmp)[,lapply(.SD,round,2)],"clipboard",sep="\t")
 
 ## VALIDATION
 AT_VAL <- RM.w(as.matrix(dtfao[valid==T,grep("f9_",names(dtfao)),with=F])
@@ -500,12 +421,17 @@ tmp <- data.table(label=c("WORRIED","HEALTHY","FEWFOOD","SKIPPED","ATELESS","RAN
            infit=round(AT_VAL$infit,2),
            outfit=round(AT_VAL$outfit,2),
 `affirmitive responses`= aff_res,
-`affirmitive responses (share)`= round(aff_res/346*100,2))
+`affirmitive responses (share)`= round(aff_res/dtfao[valid==T,.N]*100,2))  # RV1: mode-specific n (was /346 for all modes)
 write.table(tmp, file.path(DIR_FIES, "item_parameters_online.csv"), sep="\t", row.names=FALSE)
 ## Residual correclation
 abs(AT_VAL$res.corr)>.4
 ## rasch reliab
 c("reliability:",round(AT_VAL$reliab,3))
+# RV1: keep validation per sample for the appendix (RV0 appendix duplicated phone/online)
+if (!exists("rasch_val")) rasch_val <- list()
+rasch_val[[SAMPLE]] <- list(items = tmp, reliability = AT_VAL$reliab,
+                            n_valid = dtfao[valid==T,.N],
+                            rescorr_04 = which(abs(AT_VAL$res.corr) > .4 & upper.tri(AT_VAL$res.corr), arr.ind = TRUE))
 
 
 ## KALIBRATION
@@ -551,7 +477,6 @@ readWorkbook(wb,1,rows=38:39,cols=8:9,colNames = F)
 ## read probabilities
 prob_fies <- data.table(readWorkbook(wb,1,rows=40:50,cols=c(6,8:9),colNames = T))
 prob_fies[,lapply(.SD,round,2)]
-# write.table(prob_fies[,lapply(.SD,round,2)],"clipboard",sep="\t",row.names=FALSE)
 setnames(prob_fies,c("rs","p_ms","p_s"))
 ## prevalence rates
  data.table(readWorkbook(wb,1,rows=40:41,cols=c(10:11),colNames = T))[,lapply(.SD,round,4)]
@@ -572,11 +497,6 @@ cat("Severe threshold: rs >=", threshold_rs_s, "\n")
 
 ```{r}
 
-
-
-library(RM.weights)
-library(openxlsx)
-
 SAMPLE <- "Telefon"
 dtfao <- dt[r_methode=="Telefon",c(grep("f9_",names(dt),value=T),"id","weight"),with=F]
 
@@ -591,7 +511,7 @@ dtfao[,rs:=rowSums(.SD),.SDcols=cols]
 ## code cases for validation and callibration
 dtfao[,valid:=!is.na(rs)&rs!=0&rs!=8]
 ## add hsize
-dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]
+dt[,hsize:=as.numeric(gsub("\\D","",as.character(r_personen)))]  # RV1: restored - setup column reordering drops hsize
 dtfao[,hsize:=dt[match(dtfao$id,dt$id),hsize]]
 ## table on hsize and rs
 dtfao[,.N,.(hsize,rs)][order(-hsize)]
@@ -610,7 +530,6 @@ rbind(`valid percent`=unlist(lapply(dtfao[,1:8],fun.sum))/dim(dtfao)[1]*100,
 `valid n`=unlist(lapply(dtfao[,1:8],fun.sum)))
 ## 8. sample size validation
 dtfao[,.N,valid]
-## write.table(data.table(tmp)[,lapply(.SD,round,2)],"clipboard",sep="\t")
 
 ## VALIDATION
 AT_VAL <- RM.w(as.matrix(dtfao[valid==T,grep("f9_",names(dtfao)),with=F])
@@ -624,12 +543,17 @@ tmp <- data.table(label=c("WORRIED","HEALTHY","FEWFOOD","SKIPPED","ATELESS","RAN
            infit=round(AT_VAL$infit,2),
            outfit=round(AT_VAL$outfit,2),
 `affirmitive responses`= aff_res,
-`affirmitive responses (share)`= round(aff_res/346*100,2))
-write.table(tmp, file.path(DIR_FIES, "item_paramesters_telefon.csv"), sep="\t", row.names=FALSE)
+`affirmitive responses (share)`= round(aff_res/dtfao[valid==T,.N]*100,2))  # RV1: mode-specific n (was /346 for all modes)
+write.table(tmp, file.path(DIR_FIES, "item_parameters_telefon.csv"), sep="\t", row.names=FALSE)
 ## Residual correclation
 abs(AT_VAL$res.corr)>.4
 ## rasch reliab
 c("reliability:",round(AT_VAL$reliab,3))
+# RV1: keep validation per sample for the appendix (RV0 appendix duplicated phone/online)
+if (!exists("rasch_val")) rasch_val <- list()
+rasch_val[[SAMPLE]] <- list(items = tmp, reliability = AT_VAL$reliab,
+                            n_valid = dtfao[valid==T,.N],
+                            rescorr_04 = which(abs(AT_VAL$res.corr) > .4 & upper.tri(AT_VAL$res.corr), arr.ind = TRUE))
 
 
 ## KALIBRATION
@@ -675,7 +599,6 @@ readWorkbook(wb,1,rows=38:39,cols=8:9,colNames = F)
 ## read probabilities
 prob_fies <- data.table(readWorkbook(wb,1,rows=40:50,cols=c(6,8:9),colNames = T))
 prob_fies[,lapply(.SD,round,2)]
-# write.table(prob_fies[,lapply(.SD,round,2)],"clipboard",sep="\t",row.names=FALSE)
 setnames(prob_fies,c("rs","p_ms","p_s"))
 ## prevalence rates
  data.table(readWorkbook(wb,1,rows=40:41,cols=c(10:11),colNames = T))[,lapply(.SD,round,4)]
@@ -809,8 +732,6 @@ Alle analytischen Variablen werden direkt mit ihren finalen Namen
 Kein `dtr`, kein nachträglicher Rename-Schritt.
 
 ```{r md-init}
-library(data.table)
-
 md <- dt[, .(id)]
 ```
 
@@ -922,24 +843,6 @@ f7_wide <- dtl_to_wide(
 md <- merge(md, f7_wide, by = "id", all.x = TRUE)
 ```
 
-### Ernährungsmuster — aus f6 (binarisiert)
-
-```{r diet}
-diet_long <- dtl[qid == "f6", .(id,
-  diet_pattern = fcase(
-    grepl("alles.*Fleisch.*Milch",                itlb), "omnivore",
-    grepl("vegetarisch.*ab und zu Fleisch",       itlb), "flexitarian",
-    grepl("Fisch.*kein Fleisch",                  itlb), "pescatarian",
-    grepl("Milch.*Eier.*kein Fleisch.*kein Fisch",itlb), "vegetarian",
-    grepl("rein pflanzlich|vegan",                itlb), "vegan",
-    default = NA_character_)
-)]
-md[, diet_pattern_omnivore := factor(
-  fifelse(diet_long[match(md$id, diet_long$id), diet_pattern] == "omnivore",
-          "Omnivore", "Other"),
-  levels = c("Omnivore", "Other"))]
-```
-
 ### Interpersonal: Soziales Ernährungsumfeld (ip_fe) — aus f9b und f13
 
 f9b: Einladen/Besuchen-Kontexte (Freunde, Gasthaus, Kaffeehaus, Hosting).
@@ -1033,8 +936,9 @@ walk <- fread(file.path(DIR_DIST, "walk_car.csv"))[,.(g_id,g_name,walk23_mean,po
 gem <- rbind(gem, walk[grep("^9", g_id),
                        .(g_id, plz = as.integer(paste0(1, sprintf("%02d", 1:23), 0)))])
 
+# RV1: 9455 removed - 11 postcodes vs 10 ids were recycled; 9455 is set NA below anyway
 plz_manual <- data.table(
-  plz  = c(4010, 4220, 4670, 4856, 5334, 6053, 6237, 8032, 9010, 9031, 9455),
+  plz  = c(4010, 4220, 4670, 4856, 5334, 6053, 6237, 8032, 9010, 9031),
   g_id = c(40101,41605,40807,40701,40436,70346,70501,60101,20101,20101)
 )
 gem  <- rbind(gem, plz_manual)
@@ -1057,15 +961,6 @@ md[, com_walk_dist := walk[match(dt[match(md$id, dt$id), plz], walk$plz),
 ### Outcomes und FIES-Kategorien (out_*, fies_*, fp_child)
 
 ```{r outcomes}
-# FIES-Rohwahrscheinlichkeiten und Kategorien aus dt übernehmen
-md[, p_ms_gesamt  := dt[match(md$id, dt$id), p_ms.gesamt]]
-md[, p_s_gesamt   := dt[match(md$id, dt$id), p_s.gesamt]]
-
-# Beta-regression-tauglich (Smithson-Verkuilen-Transformation)
-n <- nrow(md)
-md[, out_fies_ms := (p_ms_gesamt * (n - 1) + 0.5) / n]
-md[, out_fies_s  := (p_s_gesamt  * (n - 1) + 0.5) / n]
-
 # FIES-Kategorien (severe -> moderate kollabiert, als Faktor)
 fies_suffixes <- c("gesamt", "online", "telefon")
 for (s in fies_suffixes) {
@@ -1109,6 +1004,10 @@ md[, ctrl_method := factor(fcase(
 
 md[, ctrl_bundesland := dt[match(md$id, dt$id), r_bundesland]]
 md[, ctrl_weight     := dt[match(md$id, dt$id), weight.gesamt]]
+
+# RV1: household size and number of adults for household-referenced weights
+md[, ctrl_hsize   := dt[match(md$id, dt$id), hsize]]
+md[, ctrl_nadults := pmax(1, ctrl_hsize - fifelse(is.na(ih_dem_children), 0L, ih_dem_children))]
 ```
 
 ### add age
@@ -1144,9 +1043,6 @@ term_labels <- c(
   "ih_dem_migrationmigration_background" = "yes",
   "ih_dem_migrationnone"                 = "no",
   "ih_lc_health"                         = "Health status",
-  "diet_pattern_omnivore"                = "Diet",
-  "diet_pattern_omnivoreOmnivore"        = "omnivore",
-  "diet_pattern_omnivoreOther"           = "other",
   "ih_st_education"                      = "Education",
   "ih_st_educationlow"                   = "low",
   "ih_st_educationmedium"                = "medium",
@@ -1192,78 +1088,11 @@ term_labels <- c(
   "ctrl_methodphone"                     = "phone"
 )
 
-# ---- Group labels (regex pattern -> group name). Order here defines group order.
-level_labels <- c(
-  "fies_mild"                                                        = "FIES",
-  "ih_dem_age|ih_dem_gender|ih_dem_migration|ih_lc_health|ih_st|diet" = "Personal",
-  "ih_lc_hhcomp|ih_lc_urban"                                         = "Household",
-  "ih_fc"                                                            = "Food motives",
-  "ip_fe_restaurant|ip_fe_cafe|ip_sh|com_walk_dist|ip_fe_mensa"      = "Food provisioning environment",
-  "ip_fe_host|ip_sn|ip_fe_friends|fp_child"                          = "Social food environment",
-  "ctrl_method"                                                      = "Control"
-)
-
-# ---- Variable order (used by both summary table and regression tables)
-SORT_ORDER <- c(
-  "fies_mild_mod",
-  "ih_dem_age", "ih_dem_gender", "ih_lc_health","ih_dem_migration", #"diet_pattern_omnivore",
-  "ih_st_education", "ih_st_employment",
-  "ih_lc_hhcomp", "ih_lc_urban",
-  "ih_fc_price", "ih_fc_enjoyment", "ih_fc_health", "ih_fc_habit",
-  "ih_fc_community", "ih_fc_emotion",
-  "com_walk_dist", "ip_sh_coping", "ip_fe_restaurant", "ip_fe_cafe",
-  "ip_fe_mensa_cost","ip_fe_mensa_avail","ip_fe_mensa_timo",
-  "ip_fe_host", "ip_fe_friends", "ip_sn_knows_fp", "fp_child",
-  "ctrl_method"
-)
-
-# Term order for regression rows = dummy-expanded SORT_ORDER
-TERM_ORDER <- c(
-  "(Intercept)",
-  "ih_dem_age",
-  "ih_dem_genderfemale",
-  "ih_st_educationlow", "ih_st_educationmedium",
-  "ih_st_employmentout_of_labour_force", "ih_st_employmentretired",
-  "ih_st_employmentunemployed",
-  "ih_lc_health", # "diet_pattern_omnivoreOther",
-   "ih_dem_migrationmigration_background",
-  "ih_lc_hhcompsingle_no_kids", "ih_lc_hhcompcouple_kids", "ih_lc_hhcompsingle_parent",
-  "ih_lc_urbanlow", "ih_lc_urbanmedium","ih_lc_urbanhigh",
-  "ih_fc_price", "ih_fc_enjoyment", "ih_fc_health", "ih_fc_habit",
-  "ih_fc_community", "ih_fc_emotion",
-  "com_walk_dist", "ip_sh_coping", "ip_fe_restaurant", "ip_fe_cafe",
-  "ip_fe_mensa_cost","ip_fe_mensa_avail","ip_fe_mensa_timo",
-  "ip_sn_knows_fp", "ip_fe_friends", "ip_fe_host", "fp_child",
-  "ctrl_methodonline"
-)
-
-LEVEL_ORDER <- lapply(
-  md[, .SD, .SDcols = sapply(md, is.factor)],
-  levels
-)
-# ih_lc_hhcomp wird erst nach Imputation gebildet; Reihenfolge vorab fixieren,
-# damit Referenzlevel in Tabellen stimmt (Couple without children).
-LEVEL_ORDER[["ih_lc_hhcomp"]] <- c("couple_no_kids","single_no_kids",
-                                   "couple_kids","single_parent")
 
 # Variables fed to mice.
 # ih_lc_hhtype (2-stufig) und ih_dem_children (Zähler) werden als Rohvariablen
 # imputiert; die 4-stufige Haushaltskomposition wird erst *nach* der Imputation
 # in jedem vervollständigten Datensatz abgeleitet (siehe run_outcome).
-# imp_vars <- c(
-#   "fies_binary",
-#   "ih_dem_age", "ih_dem_gender",  "ih_lc_urban","ih_dem_migration",
-#   "ih_lc_health", #"diet_pattern_omnivore",
-#   "ih_st_education", "ih_st_employment",
-#   "ih_dem_children", "ih_lc_hhtype", "com_walk_dist",
-#   "ih_fc_price", "ih_fc_habit", "ih_fc_health",
-#   "ih_fc_community", "ih_fc_emotion", "ih_fc_enjoyment",
-#   "ip_fe_restaurant", "ip_fe_cafe", "ip_sh_coping",
-#   "ip_fe_host", "ip_sn_knows_fp", "ip_fe_friends", #"fp_child",
-#   "ip_fe_mensa_cost","ip_fe_mensa_avail","ip_fe_mensa_timo",
-#   "ctrl_weight", "ctrl_bundesland", "ctrl_method"
-# )
-
 imp_vars <- c(
   "fies_binary",
   "ih_dem_age", "ih_dem_agebr",
@@ -1286,13 +1115,6 @@ imp_vars <- c(
   "ctrl_weight", "ctrl_bundesland", "ctrl_method"
 )
 
-# Small helper — assigns a row's group from its term/variable name
-assign_group <- function(x) {
-  for (pattern in names(level_labels)) {
-    if (grepl(pattern, x)) return(level_labels[[pattern]])
-  }
-  NA_character_
-}
 
 # Ableitung der 4-stufigen Haushaltskomposition aus children (Zähler) + hhtype.
 # Wird nach Imputation in jedem completed dataset angewendet.
@@ -1311,6 +1133,32 @@ add_hhcomp <- function(d) {
 
 ## Regression functions
 
+### RV1: configuration
+
+```{r rv1-config}
+# Unit of inference for Table 2 (FIES is household-referenced)
+#   "individuals" = raked weight x household size (FAO convention:
+#                   individuals living in food-insecure households)
+#   "households"  = raked weight / number of adults (share of households)
+#   "respondents" = raked respondent weight (RV0 behaviour)
+UNIT <- "individuals"
+unit_weight <- function(w, hsize, nadults) switch(UNIT,
+  individuals = w * hsize,
+  households  = w / nadults,
+  respondents = w)
+# Table 3 items are respondent-level; keep respondent weights unless TRUE
+T3_UNIT_WEIGHTS <- FALSE
+
+# Raking margins (institute weights: age, gender, education, federal state,
+# employment). RV0 omitted age.
+RAKE_VARS    <- c("ih_st_education", "ih_dem_gender", "ih_st_employment",
+                  "ctrl_bundesland", "ih_dem_agebr")
+RAKE_ON_MODE <- FALSE   # TRUE fixes the weighted mode share at its full-sample value
+
+SHOW_MODE_ROW_IN_MS <- FALSE  # survey method: adjusted for, not shown as a factor row
+SHOW_CI             <- TRUE   # 95% CI next to every PPC
+```
+
 ### Raking setup (defined once, reused by all three outcomes)
 
 ```{r raking-setup}
@@ -1320,32 +1168,25 @@ make_target <- function(var) {
      .(Freq = sum(ctrl_weight, na.rm = TRUE)),
      by = var]
 }
-targets <- list(
-  education  = make_target("ih_st_education"),
-  gender     = make_target("ih_dem_gender"),
-  employment = make_target("ih_st_employment"),
-  bundesland = make_target("ctrl_bundesland")
-)
+# NB: targets are the weighted margins of the FULL sample (n = 2004), i.e. the
+# raking re-aligns the analytic subsets after exclusions; it is not a new
+# calibration to external population figures.
+# RV1: age added; margins taken from RAKE_VARS; mode optional (RAKE_ON_MODE)
+targets <- lapply(c(RAKE_VARS, "ctrl_method"), make_target)
+names(targets) <- c(RAKE_VARS, "ctrl_method")
 
 rake_weights <- function(data) {
+  vars <- RAKE_VARS
+  if (RAKE_ON_MODE && uniqueN(na.omit(data$ctrl_method)) > 1) vars <- c(vars, "ctrl_method")
   design <- svydesign(ids = ~1, data = data, weights = ~ctrl_weight)
   design_raked <- rake(
     design,
-    sample.margins     = list(~ih_st_education, ~ih_dem_gender,
-                              ~ih_st_employment, ~ctrl_bundesland),
-    population.margins = targets,
+    sample.margins     = lapply(vars, function(v) as.formula(paste0("~", v))),
+    population.margins = targets[vars],
     control = list(maxit = 20, epsilon = 1e-7)
   )
   weights(design_raked)
 }
-
-# Descriptive-analysis raked weights (complete cases on outcome)
-dt_descr <- md[!is.na(fies_cat_gesamt),
-               .(id, ih_st_education, ih_dem_gender, ih_st_employment,
-                 ctrl_bundesland, ctrl_weight)] |> na.omit()
-dt_descr[, ctrl_weight_raked := rake_weights(dt_descr)]
-dt_descr[, weightrakep := ctrl_weight_raked / sum(ctrl_weight_raked) * 100]
-dtl[, weightrakep := dt_descr[match(dtl$id, dt_descr$id), weightrakep]]
 ```
 
 
@@ -1399,13 +1240,51 @@ run_outcome <- function(outcome_col,
   })
   cat("Imputed + raked datasets ready:", length(imp_raked), "\n")
 
-  list(imp = list(raked = imp_raked))
+  # RV1: mids object and imputation settings kept for the diagnostics
+  list(imp = list(raked = imp_raked, mids = imp, method = meth,
+                  n_miss = colSums(is.na(imp_data))))
 }
 ```
 
-### 4. Verification chunk (run once after imputation)
+## Run all three outcomes
 
-```{r imputation-sanity, eval=FALSE}
+```{r run-all}
+# Imputations are stored in DIR_IMP and loaded on later knits. Render with
+# params = list(reimpute = TRUE) whenever the data preparation, the imputation
+# model or the raking changes (model and raking are checked below; data are not).
+IMP_FILE  <- file.path(DIR_IMP, "imputations_rv1.rds")
+imp_model <- list(imp_vars = imp_vars, rake_vars = RAKE_VARS, rake_on_mode = RAKE_ON_MODE)
+
+if (!params$reimpute && file.exists(IMP_FILE)) {
+  stored <- readRDS(IMP_FILE)
+  if (!identical(stored$model, imp_model))
+    stop("Stored imputations use another imputation model or raking: render with params = list(reimpute = TRUE).")
+  res_moderate <- stored$res_moderate
+  res_phone    <- stored$res_phone
+  res_online   <- stored$res_online
+} else {
+  res_moderate <- run_outcome("fies_cat_gesamt",  include_method = TRUE)
+  res_phone    <- run_outcome("fies_cat_telefon", include_method = FALSE)
+  res_online   <- run_outcome("fies_cat_online",  include_method = FALSE)
+  saveRDS(list(model = imp_model, res_moderate = res_moderate,
+               res_phone = res_phone, res_online = res_online), IMP_FILE)
+}
+```
+
+```{r run-all-weights}
+# Optional: propagate the moderate-model imputation weights back to dt / dtl
+imp_dt_full <- rbindlist(res_moderate$imp$raked)
+imp_dt_full[, impN := rep(seq_along(res_moderate$imp$raked),
+                          each = nrow(res_moderate$imp$raked[[1]]))]
+imp_weightrp <- imp_dt_full[, .(weightr = mean(ctrl_weight_raked)), id]
+for (d in list(dt, dtl)) {
+  d[, weightr  := imp_weightrp[match(d$id, imp_weightrp$id), weightr]]
+}
+```
+
+### Verification (RV1: moved behind run-all and enabled)
+
+```{r imputation-sanity}
 # Confirm childless HHs still have fp_child == 0 in every imputed dataset.
 sanity <- sapply(res_moderate$imp$raked, function(d)
   all(d[ih_dem_children == 0, fp_child] == 0))
@@ -1422,24 +1301,6 @@ new_vars <- c("ih_dem_migration", "ih_dem_agebr",
               "ih_fc_tradition", "ih_fc_environment")
 stopifnot(all(sapply(res_moderate$imp$raked, function(d)
   all(new_vars %in% names(d)) && all(!is.na(d[, ..new_vars])))))
-```
-## (needs explicit activation) Run all three outcomes 
-
-```{r run-all}
-res_moderate <- run_outcome("fies_cat_gesamt",  include_method = TRUE)
-res_phone    <- run_outcome("fies_cat_telefon", include_method = FALSE)
-res_online   <- run_outcome("fies_cat_online",  include_method = FALSE)
-
-# Optional: propagate the moderate-model imputation weights back to dt / dtl
-imp_dt_full <- rbindlist(res_moderate$imp$raked)
-imp_dt_full[, impN := rep(seq_along(res_moderate$imp$raked),
-                          each = nrow(res_moderate$imp$raked[[1]]))]
-imp_weightrp <- imp_dt_full[, .(weightr = mean(ctrl_weight_raked)), id
-                           ][, weightrp := weightr / sum(weightr)]
-for (d in list(dt, dtl)) {
-  d[, weightr  := imp_weightrp[match(d$id, imp_weightrp$id), weightr]]
-  d[, weightrp := imp_weightrp[match(d$id, imp_weightrp$id), weightrp]]
-}
 ```
 
 ## Word export helper
@@ -1548,7 +1409,7 @@ Drop-in replacement for the previous "Lund" section. Produces SIX Word files:
   lund_tables_telefon.docx             lund_tables_telefon_completecase.docx
   lund_tables_online.docx              lund_tables_online_completecase.docx
 
-Each file holds Table 2 (personal/household determinants) and Table 3
+Each file holds Table 2 (personal/household correlates) and Table 3
 (food-environment associations) for one survey mode.
 
 Design:
@@ -1560,45 +1421,50 @@ Design:
   the complete-case version runs the identical code path on a single
   listwise-deleted, raked dataset (length-1 design list -> no pooling).
 - PH = personal + household adjustment set (survey method folds into PH for
-  gesamt only). SEM = social-ecological model = PH + LASSO-selected motives
-  + all provisioning/social variables.
-- LASSO selection uses the stacked multiply-imputed design (1/m weights,
-  respondent-blocked CV folds, PH forced in unpenalised); the rule
-  (lambda.min / lambda.1se / none) is set by LASSO_RULE, and per-imputation
-  selection frequency is printed as a stability diagnostic.
+  gesamt only). Net-of (RV0: "SEM") = PH + all food motives + all
+  provisioning/social variables (Table 3: minus the outcome item itself).
+- RV1: Table 2 uses unit weights (UNIT, see rv1-config); Table 3 respondent weights.
 - Table 3 displays ALL food motives (except very-low-n "what others do" /
-  "making an impression"); only LASSO-selected motives enter the SEM set.
+  "making an impression").
 - Joint significance in both tables uses the same Rubin-pooled multivariate
   Wald test (mice::D2): Table 2 tests each factor on the
   continuous outcome; Table 3 block subheadings test the block as predictors of
-  binary FI status under each specification (unadjusted / PH / PH+Block / SEM).
+  binary FI status (unadjusted / PH / net-of) - i.e. the reverse direction of
+  the item rows, which regress each item on FI.
 
 Requires the run-all chunk (res_moderate/phone/online) to have run first.
 
 ### Setup and shared helpers
 
 ```{r lund-setup}
-library(survey); library(mice); library(mitools); library(data.table); library(glmnet)
+library(mitools)
 library(car)   # car::vif for the collinearity table
-
+# RV1: survey/mice/data.table already loaded in setup; glmnet (LASSO) removed
 stopifnot(exists("res_moderate"), exists("res_phone"), exists("res_online"))
 stopifnot(all(c("p_ms.gesamt","p_ms.telefon","p_ms.online") %in% names(dt)))
 
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
 
-stars_p <- function(p) if (is.na(p)) "" else
-  if (p < .001) "***" else if (p < .01) "**" else if (p < .05) "*" else ""
-fmt_p <- function(p) if (is.na(p)) "" else
-  if (p < .001) "<0.001" else if (p < .01) "<0.01" else
-  if (p < .05) "<0.05" else sprintf("%.3f", p)
 # p-value to 3 decimals; "<0.001" for very small. Bolding (p<.05) is applied
 # downstream in write_tables_to_word by parsing these cells.
 fmt_pval3 <- function(p) if (is.na(p)) "" else
   if (p < .001) "<0.001" else sprintf("%.3f", p)
 
+# RV1: PPC with 95% CI, "16.0 [11.2; 20.8]" (SHOW_CI)
+fmt_ppc <- function(est, lo = NA, hi = NA) {
+  if (is.null(est) || !length(est) || is.na(est)) return("")
+  if (!SHOW_CI || is.null(lo) || !length(lo) || is.na(lo)) return(sprintf("%.1f", est * 100))
+  sprintf("%.1f [%.1f; %.1f]", est * 100, lo * 100, hi * 100)
+}
 # Coefficient cell without stars (significance now lives in the adjacent p col).
-fmt_rr_coef <- function(r) if (is.na(r$rr)) "" else sprintf("%.1f", r$rr * 100)
-fmt_rr <- function(r) if (is.na(r$rr)) "" else sprintf("%.1f%s", r$rr * 100, stars_p(r$p))
+fmt_rr_coef <- function(r) fmt_ppc(r$rr, r$lo, r$hi)
+
+# RV1: internal helper column (.var) used to drop rows before export
+strip_internal <- function(tbl) {
+  tbl <- copy(as.data.table(tbl))
+  if (".var" %in% names(tbl)) tbl[, .var := NULL]
+  tbl[]
+}
 
 # ---- Mode wiring -----------------------------------------------------------
 mode_res <- list(gesamt = res_moderate, telefon = res_phone, online = res_online)
@@ -1714,6 +1580,11 @@ if (!is.null(d[["ih_dem_agebr"]]))
                    "couple_kids", "single_parent"))]
   if (!is.null(d[["com_walk_dist"]]))
     d[, com_walk_dist_15 := as.integer(com_walk_dist >= 1)]
+  # RV1: household size / adults (not in the imputation set) and unit weight
+  d[, ctrl_hsize   := md[match(d$id, md$id), ctrl_hsize]]
+  d[, ctrl_nadults := md[match(d$id, md$id), ctrl_nadults]]
+  if (!is.null(d[["ctrl_weight_raked"]]))
+    d[, w_unit := unit_weight(ctrl_weight_raked, ctrl_hsize, ctrl_nadults)]
   d[]
 }
 
@@ -1726,6 +1597,7 @@ build_cc_frame <- function(mode) {
   cc <- base[stats::complete.cases(base[, ..needed])]
   w  <- tryCatch(rake_weights(cc), error = function(e) cc$ctrl_weight)
   cc[, ctrl_weight_raked := w]
+  cc[, w_unit := unit_weight(ctrl_weight_raked, ctrl_hsize, ctrl_nadults)]  # RV1
   cc[]
 }
 
@@ -1783,9 +1655,13 @@ pool_coef_tbl <- function(rhs_terms, designs, dv = "p_ms") {
     if (is.null(sm)) return(NULL)
     co <- as.data.table(sm$coefficients, keep.rownames = "term")
     setnames(co, c("term", "estimate", "std.error", "statistic", "p.value"))
+    ci <- confint(fits[[1]])                              # RV1: 95% CI
+    co[, `2.5 %`  := ci[match(term, rownames(ci)), 1]]
+    co[, `97.5 %` := ci[match(term, rownames(ci)), 2]]
     return(co)
   }
-  tryCatch(as.data.table(summary(pool(as_mira(fits)))), error = function(e) NULL)
+  tryCatch(as.data.table(summary(pool(as_mira(fits)), conf.int = TRUE)),  # RV1: conf.int
+           error = function(e) NULL)
 }
 
 # Joint significance test used for BOTH tables (Table 2 factor tests on the
@@ -1856,79 +1732,10 @@ vif_spec <- function(rhs_terms, dlist, dv = "p_ms") {
 }
 ```
 
-### LASSO selection (stacked across imputations)
-
-```{r lund-lasso}
-# Which CV rule defines the SEM motive set:
-#   "lambda.min" = least-penalised CV optimum (often retains most motives)
-#   "lambda.1se" = parsimonious 1-SE rule (sparser selection)
-#   "none"       = no selection; SEM uses all motives (LASSO switched off)
-# lambda.min/1se are always computed and reported; this sets which feeds SEM.
-LASSO_RULE <- "none"
-
-# Main selector: one cv.glmnet on the stacked imputed datasets, each row
-# weighted ctrl_weight_raked / m, CV folds blocked by respondent id (so all m
-# copies of a person share a fold), PH + method forced in (zero penalty).
-# Complete-case (single dataset) reduces to a plain weighted cv.glmnet.
-run_lasso <- function(dlist, forced, wcol = "ctrl_weight_raked", dv = "p_ms") {
-  mk_X <- function(d)
-    model.matrix(as.formula(paste("~", paste(c(forced, CANDIDATES),
-                 collapse = " + "))), data = d)[, -1, drop = FALSE]
-  if (length(dlist) == 1) {
-    X <- mk_X(dlist[[1]]); y <- dlist[[1]][[dv]]; w <- dlist[[1]][[wcol]]
-    foldid <- NULL
-  } else {
-    Xs <- lapply(dlist, mk_X)
-    common <- Reduce(intersect, lapply(Xs, colnames))
-    X <- do.call(rbind, lapply(Xs, function(M) M[, common, drop = FALSE]))
-    m <- length(dlist)
-    y <- unlist(lapply(dlist, `[[`, dv))
-    w <- unlist(lapply(dlist, `[[`, wcol)) / m
-    ids <- unlist(lapply(dlist, `[[`, "id"))
-    uid <- unique(ids); set.seed(1)
-    fmap <- setNames(sample(rep(1:10, length.out = length(uid))), as.character(uid))
-    foldid <- as.integer(fmap[as.character(ids)])
-  }
-  pf <- ifelse(col_to_var(colnames(X), c(forced, CANDIDATES)) %in% forced, 0, 1)
-  set.seed(1)
-  cvfit <- if (is.null(foldid))
-    cv.glmnet(X, y, weights = w, family = "gaussian",
-              penalty.factor = pf, alpha = 1, nfolds = 10)
-  else
-    cv.glmnet(X, y, weights = w, family = "gaussian",
-              penalty.factor = pf, alpha = 1, foldid = foldid)
-  retained <- function(s) {
-    co  <- coef(cvfit, s = s)
-    nz  <- setdiff(rownames(co)[abs(as.numeric(co)) > 1e-8], "(Intercept)")
-    src <- col_to_var(nz, c(forced, CANDIDATES))
-    unique(src[src %in% CANDIDATES])
-  }
-  list(min = retained("lambda.min"), se1 = retained("lambda.1se"))
-}
-
-# Stability diagnostic: % of imputations in which each candidate is selected.
-lasso_frequency <- function(dlist, forced, wcol = "ctrl_weight_raked", dv = "p_ms") {
-  sel <- lapply(seq_along(dlist), function(i) {
-    d <- dlist[[i]]
-    X <- model.matrix(as.formula(paste("~", paste(c(forced, CANDIDATES),
-           collapse = " + "))), d)[, -1, drop = FALSE]
-    pf <- ifelse(col_to_var(colnames(X), c(forced, CANDIDATES)) %in% forced, 0, 1)
-    set.seed(i)
-    cv <- cv.glmnet(X, d[[dv]], weights = d[[wcol]], family = "gaussian",
-                    penalty.factor = pf, alpha = 1, nfolds = 10)
-    co <- coef(cv, s = "lambda.min")
-    nz <- setdiff(rownames(co)[abs(as.numeric(co)) > 1e-8], "(Intercept)")
-    unique(col_to_var(nz, c(forced, CANDIDATES)))
-  })
-  tab <- table(factor(unlist(sel), levels = CANDIDATES))
-  round(as.integer(tab) / length(dlist), 2) |> setNames(CANDIDATES)
-}
-```
-
 ### Table builders
 
 ```{r lund-builders}
-# Returns list(t2, t3, vif, lasso_kept, lasso_kept_1se, freq) for one mode/version.
+# Returns list(t2, t3, vif, n) for one mode/version.
 build_mode_set <- function(mode, use_imputation = TRUE) {
   res <- mode_res[[mode]]
   method_in_PH <- (mode == "gesamt") &&
@@ -1940,56 +1747,47 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
   else                dlist <- list(build_cc_frame(mode))
   designs <- lapply(dlist, function(d)
     svydesign(ids = ~1, weights = ~ctrl_weight_raked, data = d))
+  # RV1: Table 2 (household-referenced outcome) uses the unit weights
+  designs_t2 <- lapply(dlist, function(d)
+    svydesign(ids = ~1, weights = ~w_unit, data = d))
+  if (T3_UNIT_WEIGHTS) designs <- designs_t2
  analysis_n <- nrow(designs[[1]]$variables)   # actual modeling N for this combo
-  md_obs <- prep(md[id %in% dt[!is.na(get(mode_cat[[mode]])), id]], mode)
+  # RV1: complete-case tables report N (NA) of the complete-case frame
+  md_obs <- if (use_imputation) prep(md[id %in% dt[!is.na(get(mode_cat[[mode]])), id]], mode) else dlist[[1]]
 
-  lr   <- run_lasso(dlist, PH)
-  kept <- switch(LASSO_RULE,
-                 "lambda.1se" = lr$se1,
-                 "none"       = CANDIDATES,
-                 lr$min)
-  freq <- if (use_imputation) lasso_frequency(dlist, PH) else NULL
-  SEM  <- c(PH, kept, ALWAYS_FOOD_ENV)
+  SEM  <- c(PH, CANDIDATES, ALWAYS_FOOD_ENV)   # net-of specification
 
-  cat(sprintf("\n[%s | %s] SEM motives (%s): %s\n",
-              mode, if (use_imputation) "imputed" else "complete-case",
-              LASSO_RULE, paste(kept, collapse = ", ")))
-  cat(sprintf("[%s] lambda.min set: %s\n", mode, paste(lr$min, collapse = ", ")))
-  cat(sprintf("[%s] lambda.1se set: %s\n", mode, paste(lr$se1, collapse = ", ")))
-  if (!is.null(freq)) {
-    cat(sprintf("[%s] per-imputation selection frequency:\n", mode))
-    print(freq[order(-freq)])
-  }
-
-  coefs_PH  <- pool_coef_tbl(PH,  designs)
-  coefs_SEM <- pool_coef_tbl(SEM, designs)
+  coefs_PH  <- pool_coef_tbl(PH,  designs_t2)
+  coefs_SEM <- pool_coef_tbl(SEM, designs_t2)
 
   # ---- Table 2 -------------------------------------------------------------
   t2_vars <- if (method_in_PH) c(BASE_PH, "ctrl_method") else BASE_PH
   build_t2 <- function() {
-    tot <- prev_total(designs, "p_ms")
+    tot <- prev_total(designs_t2, "p_ms")
     out <- list(data.table(
       `Factor & dimension` = "Total",
       `Prevalence % [CI 95%]` = sprintf("%.1f [%.1f-%.1f]", tot$prev, tot$lo, tot$hi),
       `PPC unadj.` = "", `p (unadj.)` = "",
       `PPC adj. IH` = "", `p (IH)` = "",
-      `PPC adj. SEM` = "", `p (SEM)` = "",
-      `N (NA)` = sprintf("%d (0)", nrow(md_obs))))
+      `PPC net-of` = "", `p (net-of)` = "",
+      `N (NA)` = sprintf("%d (%d)", sum(!is.na(md_obs$p_ms)), sum(is.na(md_obs$p_ms))),  # RV1
+      .var = ""))
 
     for (var in t2_vars) {
       x  <- md_obs[[var]]
       bl <- table(x, useNA = "no")
       out[[length(out) + 1]] <- data.table(
         `Factor & dimension` = lbl(var), `Prevalence % [CI 95%]` = "",
-        `PPC unadj.` = "",   `p (unadj.)` = fmt_pval3(joint_test(var, var, designs, dv = "p_ms")),
-        `PPC adj. IH` = "",  `p (IH)`     = fmt_pval3(joint_test(var, PH,  designs, dv = "p_ms")),
-        `PPC adj. SEM` = "", `p (SEM)`    = fmt_pval3(joint_test(var, SEM, designs, dv = "p_ms")),
-        `N (NA)` = sprintf("%d (%d)", sum(!is.na(x)), sum(is.na(x))))
+        `PPC unadj.` = "",   `p (unadj.)` = fmt_pval3(joint_test(var, var, designs_t2, dv = "p_ms")),
+        `PPC adj. IH` = "",  `p (IH)`     = fmt_pval3(joint_test(var, PH,  designs_t2, dv = "p_ms")),
+        `PPC net-of` = "", `p (net-of)`    = fmt_pval3(joint_test(var, SEM, designs_t2, dv = "p_ms")),
+        `N (NA)` = sprintf("%d (%d)", sum(!is.na(x)), sum(is.na(x))),
+        .var = var)
 
-      prev      <- prev_by_level(var, designs, "p_ms")
-      lvl_order <- levels(as.factor(designs[[1]]$variables[[var]]))  # ref first
+      prev      <- prev_by_level(var, designs_t2, "p_ms")
+      lvl_order <- levels(as.factor(designs_t2[[1]]$variables[[var]]))  # ref first
       prev      <- prev[match(lvl_order, level)][!is.na(level)]
-      coefs_u   <- pool_coef_tbl(var, designs)
+      coefs_u   <- pool_coef_tbl(var, designs_t2)
 
       for (i in seq_len(nrow(prev))) {
         lv <- prev$level[i]; key <- paste0(var, lv); is_ref <- (i == 1)
@@ -1999,7 +1797,7 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
           if (is_ref) return("(ref)")
           if (is.null(tbl)) return("")
           r <- tbl[term == key]
-          if (!nrow(r)) "" else sprintf("%.1f", r$estimate * 100)
+          if (!nrow(r)) "" else fmt_ppc(r$estimate, r[["2.5 %"]], r[["97.5 %"]])  # RV1: CI
         }
         p_cell <- function(tbl) {
           if (is_ref || is.null(tbl)) return("")
@@ -2012,8 +1810,8 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
                                             prev$prev[i], prev$lo[i], prev$hi[i]),
           `PPC unadj.`  = coef_cell(coefs_u),   `p (unadj.)` = p_cell(coefs_u),
           `PPC adj. IH` = coef_cell(coefs_PH),  `p (IH)`     = p_cell(coefs_PH),
-          `PPC adj. SEM`= coef_cell(coefs_SEM), `p (SEM)`    = p_cell(coefs_SEM),
-          `N (NA)` = ng)
+          `PPC net-of`= coef_cell(coefs_SEM), `p (net-of)`    = p_cell(coefs_SEM),
+          `N (NA)` = ng, .var = var)
       }
     }
     rbindlist(out, fill = TRUE)
@@ -2033,19 +1831,21 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
   rr_flag <- function(var, rhs_terms, des = designs) {
     rhs  <- paste(unique(c("fi", rhs_terms)), collapse = " + ")
     fits <- svyglm_fits(as.formula(paste(var, "~", rhs)), des)
-    if (!length(fits)) return(list(rr = NA_real_, p = NA_real_))
+    na_out <- list(rr = NA_real_, p = NA_real_, lo = NA_real_, hi = NA_real_)
+    if (!length(fits)) return(na_out)
     if (length(fits) == 1) {                       # complete-case: no pooling
       sm <- tryCatch(summary(fits[[1]]), error = function(e) NULL)
       if (is.null(sm) || !("fi" %in% rownames(sm$coefficients)))
-        return(list(rr = NA_real_, p = NA_real_))
-      cf <- sm$coefficients
-      return(list(rr = cf["fi", 1], p = cf["fi", 4]))
+        return(na_out)
+      cf <- sm$coefficients; ci <- confint(fits[[1]])   # RV1: 95% CI
+      return(list(rr = cf["fi", 1], p = cf["fi", 4], lo = ci["fi", 1], hi = ci["fi", 2]))
     }
-    ps <- tryCatch(as.data.table(summary(pool(as_mira(fits)))),
+    ps <- tryCatch(as.data.table(summary(pool(as_mira(fits)), conf.int = TRUE)),
                    error = function(e) NULL)
-    if (is.null(ps)) return(list(rr = NA_real_, p = NA_real_))
+    if (is.null(ps)) return(na_out)
     r <- ps[term == "fi"]
-    if (!nrow(r)) list(rr = NA_real_, p = NA_real_) else list(rr = r$estimate, p = r$p.value)
+    if (!nrow(r)) na_out else
+      list(rr = r$estimate, p = r$p.value, lo = r[["2.5 %"]], hi = r[["97.5 %"]])
   }
   adj_rr <- function(var, full, des = designs)
     rr_flag(var, setdiff(if (full) SEM else PH, var), des)
@@ -2062,7 +1862,7 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
       `Food insecure` = pct(gp[grp == "1"]),
       `PPC`          = fmt_rr_coef(r_un),  `p (unadj.)` = fmt_pval3(r_un$p),
       `PPC adj. IH`  = fmt_rr_coef(r_ph),  `p (IH)`     = fmt_pval3(r_ph$p),
-      `PPC adj. SEM` = fmt_rr_coef(r_sem), `p (SEM)`    = fmt_pval3(r_sem$p),
+      `PPC net-of` = fmt_rr_coef(r_sem), `p (net-of)`    = fmt_pval3(r_sem$p),
       `N (NA)` = sprintf("%d (%d)", sum(!is.na(x)), sum(is.na(x))))
   }
 
@@ -2081,7 +1881,7 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
       `Food insecure` = pct(gp[grp == "1"]),
       `PPC`          = fmt_rr_coef(r_un),  `p (unadj.)` = fmt_pval3(r_un$p),
       `PPC adj. IH`  = fmt_rr_coef(r_ph),  `p (IH)`     = fmt_pval3(r_ph$p),
-      `PPC adj. SEM` = "",                 `p (SEM)`    = "",
+      `PPC net-of` = "",                 `p (net-of)`    = "",
       `N (NA)` = sprintf("%d (%d)", sum(!is.na(x)), sum(is.na(x))))
   }
 
@@ -2094,7 +1894,7 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
       `Level & dimension` = title, `Food secure` = "", `Food insecure` = "",
       `PPC`          = "", `p (unadj.)` = fmt_pval3(p_un),
       `PPC adj. IH`  = "", `p (IH)`     = fmt_pval3(p_ph),
-      `PPC adj. SEM` = "", `p (SEM)`    = fmt_pval3(p_sem),
+      `PPC net-of` = "", `p (net-of)`    = fmt_pval3(p_sem),
       `N (NA)` = "")
   }
 
@@ -2123,8 +1923,7 @@ build_mode_set <- function(mode, use_imputation = TRUE) {
   }
 
   list(t2 = build_t2(), t3 = build_t3(), vif = build_vif(),
-              n = analysis_n,
-       lasso_kept = kept, lasso_kept_1se = lr$se1, freq = freq)
+       n = analysis_n)
 }
 ```
 
@@ -2190,10 +1989,10 @@ for (cb in combos) {
   s <- build_mode_set(cb$mode, cb$imp)
   lund_out[[paste0(cb$mode, tag_imp(cb$imp))]] <- s
   caps <- list(
-    sprintf("Table 2. FI prevalence (Rasch moderate+severe) by personal/household determinant - %s, %s. PPC = percentage-point change (Gaussian identity-link survey GLM, coef x100); IH = individual+household adjustment%s; SEM = social-ecological model. Header rows: joint Wald p; level rows: pooled coefficient p; bold if p<.05.",
-            mode_title[[cb$mode]], tag_lbl(cb$imp),
+    sprintf("Table 2. FI prevalence (Rasch moderate+severe) by individual/household correlate - %s, %s; unit: %s. PPC = percentage-point change [95%% CI] (Gaussian identity-link survey GLM, coef x100); IH = individual+household adjustment%s; net-of = IH + all motives + all social and provisioning items (adjusted association net of the other domains; not interpreted as mediation). Header rows: joint Wald p; level rows: pooled coefficient p; bold if p<.05.",
+            mode_title[[cb$mode]], tag_lbl(cb$imp), UNIT,
             if (cb$mode == "gesamt") " incl. survey method" else ""),
-    sprintf("Table 3. FI x food-environment associations - %s, %s. Food secure/insecure = weighted prevalence within FI group. PPC = percentage-point difference (coef x100); IH adjusts for individual/household; SEM = full model. Block subheadings give the joint test of the block; bold if p<.05.",
+    sprintf("Table 3. Motives, social and provisioning environments by household FI status - %s, %s; respondent weights. Food secure/insecure = weighted prevalence within FI group. PPC = percentage-point difference [95%% CI] (item regressed on FI status, coef x100); IH adjusts for individual/household factors; net-of = IH + all motives + all other social and provisioning items (outcome item excluded). Block subheadings: joint Wald test (D2) of the block's items as predictors of FI status under the same adjustment (direction differs from the item rows); bold if p<.05.",
             mode_title[[cb$mode]], tag_lbl(cb$imp)),
     sprintf("Table 4. Collinearity diagnostics - %s, %s. Adjusted GVIF^(1/2df) (= sqrt(VIF) for single-df terms), averaged across datasets; ~2.24 = VIF 5, ~3.16 = VIF 10. Full specification (IH + all motives + provisioning/social).",
             mode_title[[cb$mode]], tag_lbl(cb$imp)))
@@ -2201,7 +2000,7 @@ for (cb in combos) {
 doc <- doc |> body_add_par(
     sprintf("%s - %s (n = %d)", mode_title[[cb$mode]], tag_lbl(cb$imp), s$n),
     style = "heading 1")
-tbls <- list(s$t2, s$t3, s$vif)
+tbls <- list(strip_internal(s$t2), s$t3, s$vif)
   for (k in seq_along(tbls)) {
     doc <- doc |> body_add_par(caps[[k]], style = "heading 2") |>
                   body_add_flextable(make_flextable(tbls[[k]]))
@@ -2219,15 +2018,19 @@ drop_na_col <- function(tbl) {
   tbl[]
 }
 ms <- lund_out[["gesamt"]]   # gesamt, 20-imputation = the manuscript set
+# RV1: survey method is adjusted for but not shown as a factor row (see appendix)
+ms_t2 <- as.data.table(ms$t2)
+if (!SHOW_MODE_ROW_IN_MS) ms_t2 <- ms_t2[.var != "ctrl_method"]
 write_tables_to_word(
-  table_list  = list(drop_na_col(ms$t2), drop_na_col(ms$t3)),
+  table_list  = list(drop_na_col(strip_internal(ms_t2)), drop_na_col(ms$t3)),
   table_names = list(
     "Table 2: Prevalence (Rasch probability) of FI in total and with respect to individual/household factors.",
     "Table 3: Prevalence of motives, social and food provisioning environments among individuals in food-secure and food-insecure households."),
   output_path = file.path(DIR_TAB, "manuscript_tables.docx"))
 message("Saved manuscript to: ", file.path(DIR_TAB, "manuscript_tables.docx"))
 
-print(lund_out[["gesamt"]]$t2)
+saveRDS(lund_out, file.path(DIR_APP, "lund_out.rds"))   # RV1: tables as R object, for checks
+print(strip_internal(lund_out[["gesamt"]]$t2))
 print(lund_out[["gesamt"]]$t3)
 
 ```
@@ -2252,8 +2055,6 @@ dtl[, weightrpds := dt[match(dtl$id, dt$id), weightrpds]]
 ## worries about children
 
 ```{r worries-children}
-library(survey)
-
 # Attach household composition + kids flag across all three tables
 md[, descr_sample := dt[match(md$id, dt$id), descr_sample]]
 add_hhcomp(md)
@@ -2613,18 +2414,8 @@ sprintf("%.1f%% (n = %d/%d, 95%% CI %.1f–%.1f)",
 ## priorities in the shop (f17)
 
 ```{r priorities-shop}
-X     <- dtl
 Q     <- "f17"
-D     <- doc
-L     <- lb
-xmax  <- 45
 RM    <- c("weiß n|andere|keine a")
-FIGH  <- 1.2
-xstep <- 5
-WRAP  <- 30
-
-TITLE    <- paste0(L[qid == Q, qt[1]])
-SUBTITLE <- paste0(gsub("F", "Frage ", toupper(Q)), ": ", L[qid == Q, qf[1]])
 
 # Manual reassignment of one item to "Versorgungssystem" group
 dtl[qlb == "billigere gesunde und umweltfreundliche Lebensmittel", itgroup := "Versorgungssystem"]
@@ -2646,15 +2437,8 @@ tab[, qlb     := factor(qlb,     levels = unique(qlb))]
 tab[, itgroup := as.character(itgroup)]
 tab[, itgroup := factor(itgroup, levels = rev(unique(itgroup)))]
 
-# Move dropped items into BOX text
-tab[grep(RM, qlb, ignore.case = TRUE), BOX := paste(qlb, ": ", label, collapse = " \n")]
-BOX <- tab[, .(BOX)][!is.na(BOX), unique(.SD)][, paste0(BOX, collapse = "\n\n")]
+# Drop "don't know / other / no answer" items
 tab <- tab[grep(RM, qlb, ignore.case = TRUE, invert = TRUE)]
-GES <- dtl[!is.na(weightrpds)][grep(RM, qlb, ignore.case = TRUE, invert = TRUE)][
-  grep(Q, qid)][!duplicated(id),
-  .(point(round(sum(weightrpds), 1)), uniqueN(id))]
-BOX <- paste0("gesamt: ", GES[, V1], " % (n = ", GES[, V2], ")\n",
-              BOX, "\n\nMehrfachantworten möglich")
 
 # Build design over ALL FI respondents.
 # Endorsement = 1 if respondent (a) wanted to change AND (b) named this item; else 0.
@@ -2799,25 +2583,14 @@ build_gender_table <- function(data = d) {
   }))
 }
 
-clipr_table <- function(x) {
-  html <- x %>%
-    mutate(across(where(is.numeric),
-                  ~ formatC(round(.x, 2), decimal.mark = ",", format = "f", digits = 2))) %>%
-    knitr::kable(format = "html") %>%
-    as.character()
-}
-
 tbl <- build_gender_table(d)
-tbl %>% clipr_table()
+print(tbl)   # RV1: clipboard helper removed
 ```
 
 
 ## reasons (f24–f28)
 
 ```{r reasons}
-library(survey)
-library(data.table)
-
 # ---- Helper: frequency table with weighted shares + CIs --------------------
 # qtype = "single"   → iterate over itlb values (one selection per respondent)
 # qtype = "multiple" → iterate over qlb values (one yes/no per item)
@@ -2987,32 +2760,30 @@ est <- svyciprop(~endorsed, des, method = "logit")
 sprintf("%.1f%% (n = %d/%d, 95%% CI %.1f–%.1f)",
         100 * coef(est), sum(d$endorsed), nrow(d),
         100 * attr(est, "ci")[1], 100 * attr(est, "ci")[2])
-# Expected: "61.2% (n = 101, 95% CI 53.3–68.7)"
 ```
 
 ```{r needs-plot}
-X     <- dtl
 Q     <- "f31"
-D     <- doc
-L     <- lb
-xmax  <- 45
 RM    <- c("weiß n|andere|keine a")
-FIGH  <- 1.2
 xstep <- 5
-WRAP  <- 30
 
-TITLE    <- paste0(L[qid == Q, qt[1]])
-SUBTITLE <- paste0(gsub("F", "Frage ", toupper(Q)), ": ", L[qid == Q, qf[1]])
+# RV1: Figure 5 denominator = FI respondents who want to change their diet
+# (f30 == "Ja", n ~ 101); RV0 used all FI-module respondents (n = 165).
+changer_ids <- dtl[descr_sample == TRUE & grepl("f30", qid) & itlb == "Ja", unique(id)]
+dt[, weightrpch := NA_real_]
+dt[descr_sample == TRUE & id %in% changer_ids, weightrpch := weightr / sum(weightr) * 100]
+dtl[, weightrpch := dt[match(dtl$id, dt$id), weightrpch]]
+cat("Figure 5 denominator (wants to change diet): n =", length(changer_ids), "\n")
 
 # Manual reassignment of one item to "Versorgungssystem" group
 dtl[qlb == "billigere gesunde und umweltfreundliche Lebensmittel", itgroup := "Versorgungssystem"]
 
 # Tabulate by item AND itgroup
-tab <- dtl[descr_sample == TRUE][
+tab <- dtl[descr_sample == TRUE & id %in% changer_ids][
   grepl(Q, qid) & itlb == "genannt",
-  .(label = paste0(point(round(sum(weightrpds), 1)), " %",
+  .(label = paste0(point(round(sum(weightrpch), 1)), " %",
                    " (n = ", formatC(.N, big.mark = ".", decimal.mark = ","), ")"),
-    value = sum(weightrpds), .N),
+    value = sum(weightrpch), .N),
   by = .(qlb, itgroup)
 ]
 
@@ -3024,23 +2795,15 @@ tab[, qlb     := factor(qlb,     levels = unique(qlb))]
 tab[, itgroup := as.character(itgroup)]
 tab[, itgroup := factor(itgroup, levels = rev(unique(itgroup)))]
 
-# Move dropped items into BOX text
-tab[grep(RM, qlb, ignore.case = TRUE), BOX := paste(qlb, ": ", label, collapse = " \n")]
-BOX <- tab[, .(BOX)][!is.na(BOX), unique(.SD)][, paste0(BOX, collapse = "\n\n")]
+# Drop "don't know / other / no answer" items
 tab <- tab[grep(RM, qlb, ignore.case = TRUE, invert = TRUE)]
-GES <- dtl[!is.na(weightrpds)][grep(RM, qlb, ignore.case = TRUE, invert = TRUE)][
-  grep(Q, qid)][!duplicated(id),
-  .(point(round(sum(weightrpds), 1)), uniqueN(id))]
-BOX <- paste0("gesamt: ", GES[, V1], " % (n = ", GES[, V2], ")\n",
-              BOX, "\n\nMehrfachantworten möglich")
 
-# Endorsement = 1 if respondent (a) wanted to change AND (b) named this item; else 0.
-# Non-changers stay as structural zeros.
+# RV1: estimated among respondents who want to change their diet only
 items <- unique(dtl[descr_sample == TRUE & grepl(Q, qid) &
                     !grepl(RM, qlb, ignore.case = TRUE), qlb])
 
 ci_results <- rbindlist(lapply(items, function(it) {
-  d <- dt[descr_sample == TRUE, .(id, weightr)]
+  d <- dt[descr_sample == TRUE & id %in% changer_ids, .(id, weightr)]
   endorsed_ids <- dtl[descr_sample == TRUE & grepl(Q, qid) &
                       qlb == it & itlb == "genannt", id]
   d[, endorsed := as.integer(id %in% endorsed_ids)]
@@ -3054,6 +2817,11 @@ ci_results <- rbindlist(lapply(items, function(it) {
 }))
 
 tab[ci_results, on = "qlb", `:=`(ci_low = i.ci_low, ci_high = i.ci_high)]
+# RV1: share relative to the full FI module (n = 165), to be reported separately and labelled
+fig5_rel_module <- tab[, .(qlb, share_of_module = value * sum(dt[descr_sample == TRUE & id %in% changer_ids, weightr]) /
+                                                   sum(dt[descr_sample == TRUE, weightr]))]
+print(fig5_rel_module)
+
 tab[, lbl := sprintf("%s%% [%s–%s]",
                      point(round(value,   1)),
                      point(round(ci_low,  1)),
@@ -3099,7 +2867,7 @@ ggplot(tab, aes(y = qlb, x = value, fill = itgroup)) +
   geom_text(aes(label = lbl, x = ci_high + 1.2),
             hjust = 0, size = 11 * .7, size.unit = "pt", color = "black",
             family = "Times New Roman") +
-  ylab("") + xlab("Weighted share endorsed by FI (%)") +
+  ylab("") + xlab("Weighted share among FI respondents who want to change their diet (%)") +
   scale_x_continuous(breaks = seq(0, 55, xstep), limits = c(0, 55), expand = c(0, 0)) +
   scale_fill_okabe_ito(name = "") +
   guides(
@@ -3126,3 +2894,327 @@ TITLE <- "needs"
 PATH <- file.path(DIR_FIG, paste0(TITLE,"2.png")); ggsave(PATH, dpi = 300, width = 7, height = 5); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
 ```
 
+
+
+# RV1: additional outputs for the technical appendix
+
+Requires the chunks above (FAO calculation, run-all, lund-export). All tables
+are collected in `../../appendix/rv1_appendix_additions.docx`; figures go to
+`../../appendix/`.
+
+## Weights and sample composition by mode
+
+```{r rv1-weights}
+# Raking targets = weighted margins of the full sample (n = 2004)
+rake_targets <- rbindlist(lapply(names(targets), function(v)
+  targets[[v]][, .(variable = lbl(v), level = as.character(get(v)),
+                   `share %` = round(Freq / sum(Freq) * 100, 1))]))
+print(rake_targets)
+
+# Analytic sample (gesamt), first imputed dataset
+d1 <- prep(res_moderate$imp$raked[[1]], "gesamt")
+kish <- function(w) round(sum(w)^2 / sum(w^2), 0)   # effective sample size
+w_diag <- d1[, .(n = .N,
+                 `n eff. base`  = kish(ctrl_weight),
+                 `n eff. raked` = kish(ctrl_weight_raked),
+                 `n eff. unit`  = kish(w_unit),
+                 `weighted share % (raked)` = round(sum(ctrl_weight_raked) / sum(d1$ctrl_weight_raked) * 100, 1),
+                 `weighted share % (unit)`  = round(sum(w_unit) / sum(d1$w_unit) * 100, 1)),
+             by = .(mode = ctrl_method)]
+print(w_diag)
+
+# Composition by mode: unweighted, base weight, raked weight (observed values)
+comp_vars <- c("ih_dem_agebr", "ih_dem_gender", "ih_dem_migration", "ih_st_education",
+               "ih_st_employment", "ih_lc_hhcomp", "ih_lc_urban", "ih_lc_health")
+cd <- prep(md[!is.na(fies_cat_gesamt)], "gesamt")
+cd[, w_raked := d1[match(cd$id, d1$id), ctrl_weight_raked]]
+comp_by_mode <- rbindlist(lapply(comp_vars, function(v) {
+  x <- cd[!is.na(get(v)), .(n = .N, w_base = sum(ctrl_weight), w_rk = sum(w_raked)),
+          by = .(mode = ctrl_method, level = as.character(get(v)))]
+  x[, `:=`(unweighted = round(n / sum(n) * 100, 1),
+           base       = round(w_base / sum(w_base) * 100, 1),
+           raked      = round(w_rk / sum(w_rk) * 100, 1)), by = mode]
+  x[, variable := lbl(v)][]
+}))
+comp_by_mode <- dcast(comp_by_mode, variable + level ~ mode,
+                      value.var = c("unweighted", "base", "raked"))
+print(comp_by_mode)
+```
+
+## Missing FIES items and the 180 exclusions
+
+```{r rv1-fies-missing}
+# Exclusion rule as applied in the FAO chunks: a respondent with at least one
+# missing FIES item ("weiß nicht" / "keine Angabe") has no raw score and is
+# excluded (FAO 2016); respondents without household size are dropped as well.
+fies_items <- paste0("f9_", 1:8)
+is_miss <- function(x) { x <- as.numeric(x); is.na(x) | x > 2 }
+fm <- dt[, .(id, mode = r_methode, hsize)]
+fm[, n_missing := rowSums(dt[, lapply(.SD, is_miss), .SDcols = fies_items])]
+fm[, excluded := n_missing > 0 | is.na(hsize)]
+# check: must reproduce the FIES analytic sample
+print(table(excluded = fm$excluded, fies_missing = is.na(dt$fies_cat_gesamt)))
+
+fies_missing_by_mode <- fm[, .(n = .N,
+                               `>= 1 item missing` = sum(n_missing > 0),
+                               `household size missing only` = sum(n_missing == 0 & is.na(hsize)),
+                               excluded = sum(excluded),
+                               `excluded %` = round(mean(excluded) * 100, 1)), by = mode]
+print(fies_missing_by_mode)
+
+# Missing per item and mode
+fies_item_missing <- dt[, lapply(.SD, function(x) sum(is_miss(x))), by = .(mode = r_methode),
+                        .SDcols = fies_items]
+print(fies_item_missing)
+
+# Number of missing items among excluded respondents
+print(dcast(fm[n_missing > 0, .N, by = .(mode, n_missing)], n_missing ~ mode,
+            value.var = "N", fill = 0))
+
+# Excluded vs retained respondents (institute base weight; design-based chi-square)
+ex <- prep(md, "gesamt")
+ex[, excluded := as.integer(is.na(fies_cat_gesamt))]
+ex[, w_base := dt[match(ex$id, dt$id), weight]]
+excl_compare <- rbindlist(lapply(c("ctrl_method", comp_vars), function(v) {
+  dd  <- ex[!is.na(get(v))]
+  des <- svydesign(ids = ~1, weights = ~w_base, data = dd)
+  p   <- tryCatch(as.numeric(svychisq(as.formula(paste0("~excluded + ", v)), des)$p.value),
+                  error = function(e) NA_real_)
+  tab <- dd[, .(w = sum(w_base)), by = .(excluded, level = as.character(get(v)))]
+  tab[, share := round(w / sum(w) * 100, 1), by = excluded]
+  tab <- dcast(tab, level ~ excluded, value.var = "share")
+  setnames(tab, c("0", "1"), c("retained %", "excluded %"), skip_absent = TRUE)
+  tab[, `:=`(variable = lbl(v), `p (chi2)` = fmt_pval3(p))]
+  setcolorder(tab, "variable")[]
+}), fill = TRUE)
+print(excl_compare)
+```
+
+## FI-specific module coverage (programming error)
+
+```{r rv1-module-coverage}
+# Survey rule: the FI-specific module was shown to respondents affirming at least
+# one FIES item. Received = f14 answered (same definition as descr_sample).
+FIELD_DATE_VAR <- NULL   # set to the interview-date column of dt, if available
+
+mc <- md[, .(id, mode = as.character(ctrl_method), fies_low, fies_cat_gesamt,
+             ih_dem_agebr, ih_dem_gender, ih_st_education, ih_st_employment)]
+mc[, received := !is.na(dt[match(mc$id, dt$id), f14])]
+
+module_cov <- rbind(
+  mc[fies_low == TRUE, .(group = "eligible (>= 1 item affirmed)", eligible = .N, received = sum(received)), by = mode],
+  mc[fies_cat_gesamt == "moderate", .(group = "moderate/severe", eligible = .N, received = sum(received)), by = mode])
+module_cov <- rbind(module_cov,
+                    module_cov[, .(mode = "total", eligible = sum(eligible), received = sum(received)), by = group])
+module_cov[, missing := eligible - received]
+setcolorder(module_cov, c("group", "mode"))
+print(module_cov[order(group, mode)])
+
+# Who did not receive it (moderate/severe)?
+mm <- mc[fies_cat_gesamt == "moderate"]
+missed_compare <- rbindlist(lapply(c("mode", "ih_dem_agebr", "ih_dem_gender",
+                                     "ih_st_education", "ih_st_employment"), function(v) {
+  x <- mm[!is.na(get(v)), .(n = .N, missed = sum(!received)), by = .(level = as.character(get(v)))]
+  x[, `:=`(variable = lbl(v), `missed %` = round(missed / n * 100, 1))]
+  x[, p_fisher := fmt_pval3(tryCatch(fisher.test(table(mm[[v]], mm$received))$p.value,
+                                     error = function(e) NA_real_))]
+  setcolorder(x, "variable")[]
+}))
+print(missed_compare)
+
+if (!is.null(FIELD_DATE_VAR)) {
+  mm[, field_date := dt[match(mm$id, dt$id), get(FIELD_DATE_VAR)]]
+  print(mm[, .(n = .N, missed = sum(!received)), by = .(week = format(as.Date(field_date), "%Y-%V"))][order(week)])
+}
+```
+
+## Sensitivity of the pooled prevalence
+
+```{r rv1-sensitivity}
+# Moderate+severe prevalence (Rasch posterior, pooled calibration) under
+# alternative weights and mode compositions. The outcome is not imputed; values
+# are averaged over the imputed datasets (raking differs slightly between them).
+d_list <- lapply(res_moderate$imp$raked, prep, mode = "gesamt")
+prev_w <- function(d, w) d[, sum(p_ms * get(w)) / sum(get(w)) * 100]
+trim_w <- function(w) pmin(pmax(w, quantile(w, .01)), quantile(w, .99))
+
+sens <- rbindlist(lapply(d_list, function(d) {
+  d <- copy(d)
+  d[, `:=`(w_one       = 1,
+           w_base_unit = unit_weight(ctrl_weight, ctrl_hsize, ctrl_nadults),
+           w_unit_trim = trim_w(w_unit))]
+  p_on <- d[ctrl_method == "online", sum(p_ms * w_unit) / sum(w_unit)]
+  p_ph <- d[ctrl_method == "phone",  sum(p_ms * w_unit) / sum(w_unit)]
+  s_on <- d[, sum(w_unit[ctrl_method == "online"]) / sum(w_unit)]
+  data.table(
+    variant = c("unweighted", "base weight", "base weight x unit",
+                "raked (respondents)", "raked x unit (main)", "raked x unit, trimmed 1%/99%",
+                "online only", "phone only",
+                "online share = realised", "online share = 30%",
+                "online share = 50%", "online share = 70%"),
+    prevalence = c(prev_w(d, "w_one"), prev_w(d, "ctrl_weight"), prev_w(d, "w_base_unit"),
+                   prev_w(d, "ctrl_weight_raked"), prev_w(d, "w_unit"), prev_w(d, "w_unit_trim"),
+                   p_on * 100, p_ph * 100,
+                   (s_on * p_on + (1 - s_on) * p_ph) * 100,
+                   (.3 * p_on + .7 * p_ph) * 100,
+                   (.5 * p_on + .5 * p_ph) * 100,
+                   (.7 * p_on + .3 * p_ph) * 100),
+    online_share = s_on)
+}))
+cat("Realised weighted online share (unit weights):",
+    round(mean(sens$online_share) * 100, 1), "%\n")
+sens <- sens[, .(`prevalence %` = round(mean(prevalence), 1)), by = variant]
+
+# Mode-specific Rasch calibration (separate FIES models per mode). The mode
+# samples are raked to the full-sample margins, i.e. to a common composition.
+sep_cal <- rbindlist(lapply(c("online", "telefon"), function(m) {
+  dl <- lapply(mode_res[[m]]$imp$raked, prep, mode = m)
+  data.table(variant = paste0(m, " only, mode-specific calibration"),
+             `prevalence %` = round(mean(sapply(dl, prev_w, w = "w_unit")), 1))
+}))
+sens <- rbind(sens, sep_cal)
+print(sens)
+
+# Main estimate and mode-specific estimates with 95% CI (pooled calibration)
+des_unit <- lapply(d_list, function(d) svydesign(ids = ~1, weights = ~w_unit, data = d))
+main_ci  <- prev_total(des_unit)
+mode_ci  <- prev_by_level("ctrl_method", des_unit)
+print(main_ci); print(mode_ci)
+```
+
+## Numbers for the survey-mode paragraph
+
+```{r rv1-mode-paragraph}
+t2g <- as.data.table(lund_out[["gesamt"]]$t2)
+mode_rows <- t2g[.var == "ctrl_method"]
+cat(sprintf("Pooled prevalence (unit = %s): %.1f%% [%.1f-%.1f]\n",
+            UNIT, main_ci$prev, main_ci$lo, main_ci$hi))
+for (i in seq_len(nrow(mode_ci)))
+  cat(sprintf("  %s: %.1f%% [%.1f-%.1f]\n", mode_ci$level[i],
+              mode_ci$prev[i], mode_ci$lo[i], mode_ci$hi[i]))
+cat("Mode difference (online vs phone), PPC [95% CI]:\n")
+print(strip_internal(mode_rows))
+print(fies_missing_by_mode)
+```
+
+## Gradient concordance across modes
+
+```{r rv1-gradients}
+# IH-adjusted PPCs estimated separately in the online and phone samples
+# (mode-specific calibration). Same sign = gradient points the same way.
+grad_tab <- function(m) {
+  x <- as.data.table(lund_out[[m]]$t2)
+  x[!`PPC adj. IH` %in% c("", "(ref)"),
+    .(.var, level = trimws(`Factor & dimension`), prev = `Prevalence % [CI 95%]`, ppc = `PPC adj. IH`)]
+}
+num1 <- function(x) suppressWarnings(as.numeric(sub(" .*", "", x)))
+grad <- merge(grad_tab("online"), grad_tab("telefon"), by = c(".var", "level"),
+              suffixes = c(" online", " phone"), sort = FALSE)
+grad[, factor := vapply(.var, lbl, character(1))]
+grad[, `same sign` := sign(num1(`ppc online`)) == sign(num1(`ppc phone`))]
+grad <- grad[, .(factor, level, `prev online`, `ppc online`, `prev phone`, `ppc phone`, `same sign`)]
+print(grad)
+cat("Same sign:", grad[, sum(`same sign`, na.rm = TRUE)], "of", nrow(grad), "contrasts\n")
+```
+
+## Imputation diagnostics
+
+```{r rv1-imputation}
+imp_m <- res_moderate$imp$mids
+imp_info <- data.table(variable  = names(res_moderate$imp$n_miss),
+                       n_missing = as.integer(res_moderate$imp$n_miss))
+imp_info[, `missing %` := round(n_missing / nrow(imp_m$data) * 100, 1)]
+imp_info[, method := res_moderate$imp$method[variable]]
+imp_info[method == "" & n_missing > 0, method := "not imputed"]
+imp_info[, label := vapply(variable, lbl, character(1))]
+print(imp_info[n_missing > 0 | variable %in% c("fies_binary", "ctrl_weight", "ctrl_method")])
+cat("m =", imp_m$m, "| iterations =", imp_m$iteration,
+    "| predictors: all variables in imp_vars (incl. FIES category, base weight,",
+    "federal state and survey method), id excluded\n")
+
+# Trace plots (convergence)
+png(file.path(DIR_APP, "imputation_traceplots_%02d.png"), width = 2000, height = 2400, res = 200)
+print(plot(imp_m))
+dev.off()
+
+# Observed vs imputed values
+imp_cmp <- rbindlist(lapply(imp_info[n_missing > 0 & !method %in% c("", "not imputed"), variable], function(v) {
+  obs <- imp_m$data[[v]][!is.na(imp_m$data[[v]])]
+  iv  <- unlist(lapply(imp_m$imp[[v]], as.character))
+  if (is.numeric(obs) && uniqueN(obs) > 2) {
+    data.table(variable = lbl(v), level = "mean",
+               observed = round(mean(obs), 2), imputed = round(mean(as.numeric(iv)), 2))
+  } else {
+    lv <- sort(unique(as.character(obs)))
+    data.table(variable = lbl(v), level = lv,
+               observed = round(as.numeric(prop.table(table(factor(as.character(obs), lv)))) * 100, 1),
+               imputed  = round(as.numeric(prop.table(table(factor(iv, lv)))) * 100, 1))
+  }
+}))
+print(imp_cmp)
+
+num_vars <- imp_info[n_missing > 0 & !method %in% c("", "not imputed") &
+                     variable %in% c("ih_dem_age", "com_walk_dist"), variable]
+if (length(num_vars)) {
+  png(file.path(DIR_APP, "imputation_density.png"), width = 2000, height = 1000, res = 200)
+  print(tryCatch(lattice::densityplot(imp_m, as.formula(paste("~", paste(num_vars, collapse = " + ")))),
+                 error = function(e) NULL))
+  dev.off()
+}
+```
+
+## Pairwise correlations of social and provisioning items
+
+```{r rv1-tetrachoric}
+tc_vars <- c(SOCIAL, PROVISIONING)
+tc_d <- prep(md[!is.na(fies_cat_gesamt)], "gesamt")
+tc <- tryCatch(psych::tetrachoric(as.data.frame(tc_d[, ..tc_vars]),
+                                  weight = tc_d$ctrl_weight, na.rm = TRUE)$rho,
+               error = function(e) psych::tetrachoric(as.data.frame(tc_d[, ..tc_vars]), na.rm = TRUE)$rho)
+tc_tab <- data.table(item = vapply(rownames(tc), lbl, character(1)), round(tc, 2))
+setnames(tc_tab, c("item", vapply(colnames(tc), lbl, character(1))))
+print(tc_tab)
+```
+
+## Rasch validation by mode
+
+```{r rv1-rasch}
+rasch_tabs <- lapply(names(rasch_val), function(m) {
+  x <- rasch_val[[m]]
+  cat(sprintf("%s: n valid = %d, Rasch reliability = %.3f, residual correlations > .4: %d\n",
+              m, x$n_valid, x$reliability, nrow(x$rescorr_04)))
+  as.data.table(x$items)
+})
+names(rasch_tabs) <- names(rasch_val)
+```
+
+## Export
+
+```{r rv1-export}
+rv1_tables <- c(
+  list("Raking targets (weighted margins of the full sample, n = 2004)" = rake_targets,
+       "Weights by survey mode: effective sample sizes and weighted mode shares" = w_diag,
+       "Sample composition by survey mode (%; unweighted, base weight, raked weight)" = comp_by_mode,
+       "Excluded respondents by survey mode (incomplete FIES or missing household size)" = fies_missing_by_mode,
+       "Missing FIES responses by item and survey mode" = fies_item_missing,
+       "Excluded vs retained respondents (base-weighted %, design-based chi-square)" = excl_compare,
+       "FI-specific module: eligible vs received" = module_cov,
+       "Moderate/severe respondents without the FI-specific module" = missed_compare,
+       "Sensitivity of the pooled prevalence (moderate+severe, %)" = sens,
+       "IH-adjusted gradients estimated separately by survey mode" = grad,
+       "Imputation: missingness and method per variable" =
+         imp_info[n_missing > 0, .(variable = label, n_missing, `missing %`, method)],
+       "Imputation: observed vs imputed values" = imp_cmp,
+       "Tetrachoric correlations of social and provisioning items (base weight)" = tc_tab),
+  setNames(rasch_tabs, paste0("Rasch item parameters and fit - ", names(rasch_tabs),
+                              " (shares relative to the mode-specific validation sample)")))
+
+doc <- new_landscape_doc()
+for (k in seq_along(rv1_tables)) {
+  doc <- doc |> body_add_par(names(rv1_tables)[k], style = "heading 2") |>
+    body_add_flextable(make_flextable(rv1_tables[[k]]))
+  if (k < length(rv1_tables)) doc <- doc |> body_add_break()
+}
+print(doc, target = file.path(DIR_APP, "rv1_appendix_additions.docx"))
+message("Saved to: ", file.path(DIR_APP, "rv1_appendix_additions.docx"))
+```
