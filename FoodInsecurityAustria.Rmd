@@ -27,7 +27,9 @@ Paths are relative to this repository (analysis/FoodInsecurityAustria); see READ
 Nov 2026: streamlined to the outputs of the paper and the technical appendix; html with
 floating table of contents and folded code; figures are embedded from the saved files,
 and the values shown in each figure are written to a csv next to it; tables with kable; version
-stamp (git commit) in the subtitle, code download and session info.
+stamp (git commit) in the subtitle, code download and session info. Technical appendix ordered by
+topic (A survey and weights, B FIES, C regression tables, D imputation, E Results 4.2), as in the
+exported Word file.
 
 Fixes
  1. Rasch validation by mode: affirmative shares used the pooled n (346) for all
@@ -2553,9 +2555,57 @@ Base: all `r n_fi` FI-module respondents; the question was shown to the `r n_ask
 
 # Technical appendix
 
-Stratified tables (online, phone), complete-case tables and collinearity diagnostics are written by the chunk `lund-export` (Results 4.1) to `../../tables/lund_appendix_all.docx`. The chunks below write `../../appendix/rv1_appendix_additions.docx`.
+Outputs for the technical appendix, ordered by topic. Each subsection names the review point it answers.
+The tables are shown here and written to `../../appendix/rv1_appendix_additions.docx` (headings A-E as below);
+the regression tables of section C are written by the chunk `lund-export` (Results 4.1) to
+`../../tables/lund_appendix_all.docx`.
 
-## Variable overview
+## A. Survey, sample and weights
+
+### A.1 Sample composition and weights by mode
+
+*Reviewer 2, major 2: unweighted and weighted composition of each sample, weighting and calibration.*
+
+```{r rv1-weights}
+# Raking targets = weighted margins of the full sample (n = 2004)
+rake_targets <- rbindlist(lapply(names(targets), function(v)
+  targets[[v]][, .(variable = lbl(v), level = as.character(get(v)),
+                   `share %` = round(Freq / sum(Freq) * 100, 1))]))
+kable(rake_targets, caption = "Raking targets (weighted margins of the full sample)")
+
+# Analytic sample (gesamt), first imputed dataset
+d1 <- prep(res_moderate$imp$raked[[1]], "gesamt")
+kish <- function(w) round(sum(w)^2 / sum(w^2), 0)   # effective sample size
+w_diag <- d1[, .(n = .N,
+                 `n eff. base`  = kish(ctrl_weight),
+                 `n eff. raked` = kish(ctrl_weight_raked),
+                 `n eff. unit`  = kish(w_unit),
+                 `weighted share % (raked)` = round(sum(ctrl_weight_raked) / sum(d1$ctrl_weight_raked) * 100, 1),
+                 `weighted share % (unit)`  = round(sum(w_unit) / sum(d1$w_unit) * 100, 1)),
+             by = .(mode = ctrl_method)]
+kable(w_diag, caption = "Weights by survey mode: effective sample sizes and weighted mode shares")
+
+# Composition by mode: unweighted, base weight, raked weight (observed values)
+comp_vars <- c("ih_dem_agebr", "ih_dem_gender", "ih_dem_migration", "ih_st_education",
+               "ih_st_employment", "ih_lc_hhcomp", "ih_lc_urban", "ih_lc_health")
+cd <- prep(md[!is.na(fies_cat_gesamt)], "gesamt")
+cd[, w_raked := d1[match(cd$id, d1$id), ctrl_weight_raked]]
+comp_by_mode <- rbindlist(lapply(comp_vars, function(v) {
+  x <- cd[!is.na(get(v)), .(n = .N, w_base = sum(ctrl_weight), w_rk = sum(w_raked)),
+          by = .(mode = ctrl_method, level = as.character(get(v)))]
+  x[, `:=`(unweighted = round(n / sum(n) * 100, 1),
+           base       = round(w_base / sum(w_base) * 100, 1),
+           raked      = round(w_rk / sum(w_rk) * 100, 1)), by = mode]
+  x[, variable := lbl(v)][]
+}))
+comp_by_mode <- dcast(comp_by_mode, variable + level ~ mode,
+                      value.var = c("unweighted", "base", "raked"))
+kable(comp_by_mode, caption = "Sample composition by survey mode (%; unweighted, base weight, raked weight)")
+```
+
+### A.2 Variable overview
+
+*Reviewer 2, minor 7; overview of all model variables before imputation.*
 
 ```{r lund-overview}
 # One-row-per-variable descriptive overview (unweighted, pre-imputation) on the
@@ -2598,96 +2648,9 @@ write_tables_to_word(
 kable(overview_table, caption = "Variable overview (full analytic sample, unweighted, before imputation)")
 ```
 
+### A.3 FI-specific module coverage (programming error)
 
-## Weights and sample composition by mode
-
-```{r rv1-weights}
-# Raking targets = weighted margins of the full sample (n = 2004)
-rake_targets <- rbindlist(lapply(names(targets), function(v)
-  targets[[v]][, .(variable = lbl(v), level = as.character(get(v)),
-                   `share %` = round(Freq / sum(Freq) * 100, 1))]))
-kable(rake_targets, caption = "Raking targets (weighted margins of the full sample)")
-
-# Analytic sample (gesamt), first imputed dataset
-d1 <- prep(res_moderate$imp$raked[[1]], "gesamt")
-kish <- function(w) round(sum(w)^2 / sum(w^2), 0)   # effective sample size
-w_diag <- d1[, .(n = .N,
-                 `n eff. base`  = kish(ctrl_weight),
-                 `n eff. raked` = kish(ctrl_weight_raked),
-                 `n eff. unit`  = kish(w_unit),
-                 `weighted share % (raked)` = round(sum(ctrl_weight_raked) / sum(d1$ctrl_weight_raked) * 100, 1),
-                 `weighted share % (unit)`  = round(sum(w_unit) / sum(d1$w_unit) * 100, 1)),
-             by = .(mode = ctrl_method)]
-kable(w_diag, caption = "Weights by survey mode: effective sample sizes and weighted mode shares")
-
-# Composition by mode: unweighted, base weight, raked weight (observed values)
-comp_vars <- c("ih_dem_agebr", "ih_dem_gender", "ih_dem_migration", "ih_st_education",
-               "ih_st_employment", "ih_lc_hhcomp", "ih_lc_urban", "ih_lc_health")
-cd <- prep(md[!is.na(fies_cat_gesamt)], "gesamt")
-cd[, w_raked := d1[match(cd$id, d1$id), ctrl_weight_raked]]
-comp_by_mode <- rbindlist(lapply(comp_vars, function(v) {
-  x <- cd[!is.na(get(v)), .(n = .N, w_base = sum(ctrl_weight), w_rk = sum(w_raked)),
-          by = .(mode = ctrl_method, level = as.character(get(v)))]
-  x[, `:=`(unweighted = round(n / sum(n) * 100, 1),
-           base       = round(w_base / sum(w_base) * 100, 1),
-           raked      = round(w_rk / sum(w_rk) * 100, 1)), by = mode]
-  x[, variable := lbl(v)][]
-}))
-comp_by_mode <- dcast(comp_by_mode, variable + level ~ mode,
-                      value.var = c("unweighted", "base", "raked"))
-kable(comp_by_mode, caption = "Sample composition by survey mode (%; unweighted, base weight, raked weight)")
-```
-
-## Missing FIES items and the 180 exclusions
-
-```{r rv1-fies-missing}
-# Exclusion rule as applied in the FAO chunks: a respondent with at least one
-# missing FIES item ("weiß nicht" / "keine Angabe") has no raw score and is
-# excluded (FAO 2016); respondents without household size are dropped as well.
-fies_items <- paste0("f9_", 1:8)
-is_miss <- function(x) { x <- as.numeric(x); is.na(x) | x > 2 }
-fm <- dt[, .(id, mode = r_methode, hsize)]
-fm[, n_missing := rowSums(dt[, lapply(.SD, is_miss), .SDcols = fies_items])]
-fm[, excluded := n_missing > 0 | is.na(hsize)]
-# check: must reproduce the FIES analytic sample
-kable(as.data.table(table(excluded = fm$excluded, fies_missing = is.na(dt$fies_cat_gesamt))), caption = "Check: exclusion rule reproduces the FIES analytic sample (TRUE/TRUE and FALSE/FALSE only)")
-
-fies_missing_by_mode <- fm[, .(n = .N,
-                               `>= 1 item missing` = sum(n_missing > 0),
-                               `household size missing only` = sum(n_missing == 0 & is.na(hsize)),
-                               excluded = sum(excluded),
-                               `excluded %` = round(mean(excluded) * 100, 1)), by = mode]
-kable(fies_missing_by_mode, caption = "Excluded respondents by survey mode")
-
-# Missing per item and mode
-fies_item_missing <- dt[, lapply(.SD, function(x) sum(is_miss(x))), by = .(mode = r_methode),
-                        .SDcols = fies_items]
-kable(fies_item_missing, caption = "Missing FIES responses by item and survey mode")
-
-# Number of missing items among excluded respondents
-kable(dcast(fm[n_missing > 0, .N, by = .(mode, n_missing)], n_missing ~ mode,
-            value.var = "N", fill = 0), caption = "Number of missing FIES items among excluded respondents")
-
-# Excluded vs retained respondents (institute base weight; design-based chi-square)
-ex <- prep(md, "gesamt")
-ex[, excluded := as.integer(is.na(fies_cat_gesamt))]
-ex[, w_base := dt[match(ex$id, dt$id), weight]]
-excl_compare <- rbindlist(lapply(c("ctrl_method", comp_vars), function(v) {
-  dd  <- ex[!is.na(get(v))]
-  des <- svydesign(ids = ~1, weights = ~w_base, data = dd)
-  p   <- tryCatch(as.numeric(svychisq(as.formula(paste0("~excluded + ", v)), des)$p.value),
-                  error = function(e) NA_real_)
-  tab <- dd[, .(w = sum(w_base)), by = .(excluded, level = as.character(get(v)))]
-  tab[, share := round(w / sum(w) * 100, 1), by = excluded]
-  tab <- dcast(tab, level ~ excluded, value.var = "share")
-  setnames(tab, c("0", "1"), c("retained %", "excluded %"), skip_absent = TRUE)
-  tab[, `:=`(variable = lbl(v), `p (chi2)` = fmt_pval3(p))]
-  setcolorder(tab, "variable")[]
-}), fill = TRUE)
-kable(excl_compare, caption = "Excluded vs retained respondents (base-weighted %, design-based chi-square)")
-```
-
-## FI-specific module coverage (programming error)
+*Reviewer 2, major 3: the 22 respondents without the FI-specific module.*
 
 The FI-specific module was meant to be shown to every respondent affirming at least one FIES item.
 Interview dates are not available, so the respondents who did not receive it are compared by survey mode,
@@ -2758,7 +2721,83 @@ module_domains <- rbindlist(lapply(ALWAYS_FOOD_ENV, function(v) {
 kable(module_domains, caption = "Table 3 items among moderate/severe respondents, by module receipt (observed values, %)")
 ```
 
-## Sensitivity of the pooled prevalence
+## B. FIES: validation and prevalence
+
+### B.1 Rasch validation by sample {.tabset}
+
+*Reviewer 2, major 3: validation for the full sample and by survey mode; item parameters and fit.*
+
+```{r rv1-rasch, results = "asis"}
+# Tables printed in a loop (tabs): kable needs print() and blank lines around it
+kable_asis <- function(x, ...) { print(kable(x, ...)); cat("\n\n") }
+
+rasch_summary <- rbindlist(lapply(names(rasch_val), function(m) data.table(
+  Sample = mode_title[[tolower(m)]], `n valid` = rasch_val[[m]]$n_valid,
+  `Rasch reliability` = round(rasch_val[[m]]$reliability, 3),
+  `Residual correlations > 0.4` = nrow(rasch_val[[m]]$rescorr_04))))
+kable_asis(rasch_summary, caption = "Rasch validation by sample")
+rasch_tabs <- lapply(rasch_val, function(x) as.data.table(x$items))
+for (m in names(rasch_tabs)) {
+  cat("\n\n####", mode_title[[tolower(m)]], "\n\n")
+  kable_asis(rasch_tabs[[m]], caption = paste("Rasch item parameters and fit -", mode_title[[tolower(m)]],
+                                              "(shares relative to the mode-specific validation sample)"))
+}
+```
+
+### B.2 Missing FIES items and the 180 exclusions
+
+*Reviewer 2, major 2 and 3: exclusion rule, missing FIES responses by mode, excluded vs retained respondents.*
+
+```{r rv1-fies-missing}
+# Exclusion rule as applied in the FAO chunks: a respondent with at least one
+# missing FIES item ("weiß nicht" / "keine Angabe") has no raw score and is
+# excluded (FAO 2016); respondents without household size are dropped as well.
+fies_items <- paste0("f9_", 1:8)
+is_miss <- function(x) { x <- as.numeric(x); is.na(x) | x > 2 }
+fm <- dt[, .(id, mode = r_methode, hsize)]
+fm[, n_missing := rowSums(dt[, lapply(.SD, is_miss), .SDcols = fies_items])]
+fm[, excluded := n_missing > 0 | is.na(hsize)]
+# check: the rule reproduces the FIES analytic sample
+stopifnot(identical(fm$excluded, is.na(dt$fies_cat_gesamt)))
+
+fies_missing_by_mode <- fm[, .(n = .N,
+                               `>= 1 item missing` = sum(n_missing > 0),
+                               `household size missing only` = sum(n_missing == 0 & is.na(hsize)),
+                               excluded = sum(excluded),
+                               `excluded %` = round(mean(excluded) * 100, 1)), by = mode]
+kable(fies_missing_by_mode, caption = "Excluded respondents by survey mode")
+
+# Missing per item and mode
+fies_item_missing <- dt[, lapply(.SD, function(x) sum(is_miss(x))), by = .(mode = r_methode),
+                        .SDcols = fies_items]
+kable(fies_item_missing, caption = "Missing FIES responses by item and survey mode")
+
+# Number of missing items among excluded respondents
+kable(dcast(fm[n_missing > 0, .N, by = .(mode, n_missing)], n_missing ~ mode,
+            value.var = "N", fill = 0), caption = "Number of missing FIES items among excluded respondents")
+
+# Excluded vs retained respondents (institute base weight; design-based chi-square)
+ex <- prep(md, "gesamt")
+ex[, excluded := as.integer(is.na(fies_cat_gesamt))]
+ex[, w_base := dt[match(ex$id, dt$id), weight]]
+excl_compare <- rbindlist(lapply(c("ctrl_method", comp_vars), function(v) {
+  dd  <- ex[!is.na(get(v))]
+  des <- svydesign(ids = ~1, weights = ~w_base, data = dd)
+  p   <- tryCatch(as.numeric(svychisq(as.formula(paste0("~excluded + ", v)), des)$p.value),
+                  error = function(e) NA_real_)
+  tab <- dd[, .(w = sum(w_base)), by = .(excluded, level = as.character(get(v)))]
+  tab[, share := round(w / sum(w) * 100, 1), by = excluded]
+  tab <- dcast(tab, level ~ excluded, value.var = "share")
+  setnames(tab, c("0", "1"), c("retained %", "excluded %"), skip_absent = TRUE)
+  tab[, `:=`(variable = lbl(v), `p (chi2)` = fmt_pval3(p))]
+  setcolorder(tab, "variable")[]
+}), fill = TRUE)
+kable(excl_compare, caption = "Excluded vs retained respondents (base-weighted %, design-based chi-square)")
+```
+
+### B.3 Prevalence and sensitivity of the pooled estimate
+
+*Editor 1, Reviewer 2 major 2: mode-specific estimates with CIs; the pooled estimate under alternative weights, mode shares and calibration.*
 
 ```{r rv1-sensitivity}
 # Moderate+severe prevalence (Rasch posterior, pooled calibration) under
@@ -2808,13 +2847,15 @@ kable(sens, caption = "Sensitivity of the pooled prevalence (moderate+severe, %)
 des_unit <- lapply(d_list, function(d) svydesign(ids = ~1, weights = ~w_unit, data = d))
 main_ci  <- prev_total(des_unit)
 mode_ci  <- prev_by_level("ctrl_method", des_unit)
-kable(rbind(cbind(level = "pooled", main_ci), mode_ci, use.names = TRUE), digits = 1,
-      caption = "Pooled and mode-specific prevalence with 95% CI (pooled calibration)")
+prev_ci  <- rbind(cbind(level = "pooled", main_ci), mode_ci, use.names = TRUE)
+kable(prev_ci, digits = 1, caption = "Pooled and mode-specific prevalence with 95% CI (pooled calibration)")
 ```
 
 Realised weighted online share of the pooled sample: **`r online_share`%**.
 
-## Numbers for the survey-mode paragraph
+### B.4 Survey mode
+
+*Editor 1 and 2: the mode difference and whether the gradients point the same way in both modes.*
 
 ```{r rv1-mode-paragraph}
 t2g <- as.data.table(lund_out[["gesamt"]]$t2)
@@ -2824,12 +2865,9 @@ pooled_txt <- fmt_ci(main_ci)
 mode_txt   <- paste(mode_ci$level, vapply(seq_len(nrow(mode_ci)), function(i) fmt_ci(mode_ci[i]), character(1)),
                     collapse = "; ")
 kable(strip_internal(mode_rows), caption = "Mode difference (online vs phone), PPC [95% CI] (Table 2 specification)")
-kable(fies_missing_by_mode, caption = "Excluded respondents by survey mode")
 ```
 
 Pooled prevalence (unit: `r UNIT`): **`r pooled_txt`**; by mode: **`r mode_txt`**.
-
-## Gradient concordance across modes
 
 ```{r rv1-gradients}
 # IH-adjusted PPCs estimated separately in the online and phone samples
@@ -2851,7 +2889,44 @@ n_same <- grad[, sum(`same sign`, na.rm = TRUE)]
 
 Same direction in both modes: **`r n_same` of `r nrow(grad)`** contrasts.
 
-## Imputation diagnostics
+## C. Regression analysis (Tables 2 and 3)
+
+### C.1 Tables by sample and with complete cases {.tabset}
+
+*Editor 1, Reviewer 2 major 2 and 4: estimates per survey mode, complete-case estimates, collinearity.*
+
+```{r app-regression, results = "asis"}
+for (k in names(lund_out)) {
+  s  <- lund_out[[k]]
+  cc <- grepl("_completecase$", k)
+  cat("\n\n####", mode_title[[sub("_completecase$", "", k)]], "-",
+      if (cc) "complete-case" else "imputed", "\n\n")
+  kable_asis(strip_internal(s$t2), caption = sprintf("Table 2 (n = %d): FI prevalence by individual and household factors", s$n))
+  kable_asis(s$t3, caption = "Table 3: motives, social and provisioning environments by FI status")
+  kable_asis(s$vif, caption = "Collinearity diagnostics (adjusted GVIF, full specification)")
+}
+```
+
+### C.2 Pairwise correlations of social and provisioning items
+
+*Editor 3, Reviewer 2 major 4: distinctness of the items in the net-of specification.*
+
+```{r rv1-tetrachoric}
+tc_vars <- c(SOCIAL, PROVISIONING)
+tc_d <- prep(md[!is.na(fies_cat_gesamt)], "gesamt")
+tc <- tryCatch(psych::tetrachoric(as.data.frame(tc_d[, ..tc_vars]),
+                                  weight = tc_d$ctrl_weight, na.rm = TRUE)$rho,
+               error = function(e) psych::tetrachoric(as.data.frame(tc_d[, ..tc_vars]), na.rm = TRUE)$rho)
+tc_tab <- data.table(item = vapply(rownames(tc), lbl, character(1)), round(tc, 2))
+setnames(tc_tab, c("item", vapply(colnames(tc), lbl, character(1))))
+kable(tc_tab, caption = "Tetrachoric correlations of social and provisioning items")
+```
+
+## D. Multiple imputation
+
+*Reviewer 2, major 4: imputed variables, imputation model, diagnostics and pooling.*
+
+### D.1 Imputation model and settings
 
 ```{r rv1-imputation}
 imp_m <- res_moderate$imp$mids
@@ -2864,50 +2939,16 @@ imp_info[, label := vapply(variable, lbl, character(1))]
 kable(imp_info[n_missing > 0 | variable %in% c("fies_binary", "ctrl_weight", "ctrl_method")],
       caption = "Imputation: missingness and method per variable")
 
-# Trace plots (convergence)
-png(file.path(DIR_APP, "imputation_traceplots_%02d.png"), width = 2000, height = 2400, res = 200)
-print(plot(imp_m))
-invisible(dev.off())
-knitr::include_graphics(list.files(DIR_APP, "^imputation_traceplots_.*[.]png$", full.names = TRUE), dpi = 200)
-
-# Observed vs imputed values (labels also used for the R-hat figure)
+# Variable labels for the imputation tables and the R-hat figure
 imp_lbl <- c(ih_dem_age = "Age (years)", ih_dem_agebr = "Age group",
              ih_lc_hhtype = "Household type (single/multi-adult)", ih_dem_children = "Number of children",
              fies_binary = "FI status (moderate or severe)")
 lbl_imp <- function(v) if (v %chin% names(imp_lbl)) imp_lbl[[v]] else lbl(v)
-imp_cmp <- rbindlist(lapply(imp_info[n_missing > 0 & !method %in% c("", "not imputed"), variable], function(v) {
-  obs   <- imp_m$data[[v]][!is.na(imp_m$data[[v]])]
-  iv    <- unlist(lapply(imp_m$imp[[v]], as.character))
-  n_mis <- sum(is.na(imp_m$data[[v]]))
-  if (is.numeric(obs) && uniqueN(obs) > 2) {
-    data.table(variable = lbl_imp(v), level = "mean", `n missing` = n_mis,
-               observed = round(mean(obs), 2), imputed = round(mean(as.numeric(iv)), 2))
-  } else {
-    lv  <- sort(unique(as.character(obs)))
-    out <- data.table(variable = lbl_imp(v), level = lv, `n missing` = n_mis,
-                      observed = round(as.numeric(prop.table(table(factor(as.character(obs), lv)))) * 100, 1),
-                      imputed  = round(as.numeric(prop.table(table(factor(iv, lv)))) * 100, 1))
-    if (identical(lv, c("0", "1"))) out[level == "1"] else out   # binary items: share of 1 only
-  }
-}))
-imp_cmp[, `observed - imputed` := round(observed - imputed, 2)]
-kable(imp_cmp, caption = paste("Imputation: observed vs imputed values (% or mean; binary items: share of 1);",
-                               "n missing = imputed cases per dataset (full sample)"))
-
-num_vars <- imp_info[n_missing > 0 & !method %in% c("", "not imputed") &
-                     variable %in% c("ih_dem_age", "com_walk_dist"), variable]
-if (length(num_vars)) {
-  png(file.path(DIR_APP, "imputation_density.png"), width = 2000, height = 1000, res = 200)
-  print(tryCatch(lattice::densityplot(imp_m, as.formula(paste("~", paste(num_vars, collapse = " + ")))),
-                 error = function(e) NULL))
-  invisible(dev.off())
-}
-if (length(num_vars)) knitr::include_graphics(file.path(DIR_APP, "imputation_density.png"), dpi = 200)
 ```
 
 Imputation settings: **`r imp_m$m` imputations, `r imp_m$iteration` iterations**; predictors: all variables in `imp_vars` (incl. FIES category, base weight, federal state and survey mode), id excluded.
 
-## Missingness of the imputed covariates
+### D.2 Missingness of the imputed covariates
 
 Missing at random cannot be tested directly. The tables show whether missing values of the imputed covariates
 cluster by survey mode or in particular groups (full sample, before imputation).
@@ -2944,15 +2985,65 @@ kable(mis_compare, caption = "Respondents with at least one missing covariate vs
 
 Respondents with at least one missing value in the imputed covariates: **`r n_any_missing` of `r nrow(mis_d)`** (`r round(n_any_missing / nrow(mis_d) * 100, 1)`%).
 
-## Number of imputations and convergence
+### D.3 Convergence
 
-Number of imputations: two-stage quadratic rule of von Hippel (2020), implemented in `howManyImputations`.
-The imputations of the current run serve as pilot (first run: 20); the required number follows from the upper confidence limit of the largest
-fraction of missing information (FMI) of the reported coefficients, for standard errors reproducible to
-+/- 5% (CV = 0.05). Table 2: all coefficients of the model; Table 3: the coefficient of FI status, item with the
-largest requirement. Convergence: Gelman-Rubin R-hat of the chain means and variances (`miceadds::Rhat.mice`).
+Trace plots of the chain means and standard deviations (full sample) and the Gelman-Rubin R-hat of the chain
+means and variances (`miceadds::Rhat.mice`) for all three samples.
 
-```{r rv1-imputation-checks, fig.cap = "R-hat of the imputation chains per imputed variable and sample; dashed line: 1.1."}
+```{r rv1-imputation-trace}
+# Trace plots (convergence)
+png(file.path(DIR_APP, "imputation_traceplots_%02d.png"), width = 2000, height = 2400, res = 200)
+print(plot(imp_m))
+invisible(dev.off())
+knitr::include_graphics(list.files(DIR_APP, "^imputation_traceplots_.*[.]png$", full.names = TRUE), dpi = 200)
+```
+
+```{r rv1-imputation-rhat, fig.cap = "R-hat of the imputation chains per imputed variable and sample; dashed line: 1.1."}
+# Convergence of the imputation chains
+rhat <- rbindlist(lapply(names(mode_res), function(m)
+  cbind(sample = m, as.data.table(miceadds::Rhat.mice(mode_res[[m]]$imp$mids)))))
+n_rhat <- rhat[Rhat.M.imp > 1.1 | Rhat.Var.imp > 1.1, .N]
+
+rhat_long <- melt(rhat, id.vars = c("sample", "variable"), measure.vars = c("Rhat.M.imp", "Rhat.Var.imp"),
+                  variable.name = "statistic", value.name = "rhat")
+rhat_long[, statistic := fifelse(statistic == "Rhat.M.imp", "chain means", "chain variances")]
+rhat_long <- rhat_long[!is.na(rhat)]                       # variables that are not imputed have no R-hat
+rhat_lbl  <- imp_lbl
+rhat_long[, variable  := fifelse(as.character(variable) %chin% names(rhat_lbl), rhat_lbl[as.character(variable)],
+                                 vapply(as.character(variable), lbl, character(1)))]
+rhat_long[, sample    := mode_title[sample]]
+
+fig <- ggplot(rhat_long, aes(x = rhat, y = variable, shape = statistic)) +
+  geom_vline(xintercept = 1.1, linetype = "dashed", linewidth = .25) +
+  geom_point(size = 1.8) +
+  scale_shape_manual(values = c(16, 1), name = "") +
+  facet_wrap(~ sample, nrow = 1) +
+  labs(x = "R-hat", y = NULL) +
+  theme_classic(base_size = 11) +
+  theme(
+    legend.position  = "bottom",
+    axis.line        = element_line(linewidth = .25),
+    axis.ticks       = element_line(linewidth = .25),
+    strip.background = element_blank(),
+    text             = element_text(family = "Times New Roman")
+  )
+
+PATH <- file.path(DIR_APP, "imputation_rhat.png")
+ggsave(PATH, fig, dpi = 300, width = 8, height = 6)
+fwrite(rhat_long, sub("png$", "csv", PATH))   # values shown in the figure
+knitr::include_graphics(PATH, dpi = 300)
+```
+
+Variables with R-hat above 1.1: **`r n_rhat`** (iterations: `r imp_m$iteration`).
+
+### D.4 Number of imputations
+
+Two-stage quadratic rule of von Hippel (2020), implemented in `howManyImputations`. The imputations of the
+current run serve as pilot; the required number follows from the upper confidence limit of the largest fraction
+of missing information (FMI) of the reported coefficients, for standard errors reproducible to +/- 5% (CV = 0.05).
+Table 2: all coefficients of the model; Table 3: the coefficient of FI status, item with the largest requirement.
+
+```{r rv1-imputation-m}
 # Required number of imputations for one specification (fits = svyglm per imputed dataset)
 m_needed <- function(fits, term = NULL) {
   p <- pool(as_mira(fits))
@@ -2987,105 +3078,85 @@ check_mode <- function(m) {
 imp_check <- rbindlist(lapply(names(mode_res), check_mode))
 m_max <- imp_check[, max(m_needed)]
 kable(imp_check, caption = "Number of imputations needed (von Hippel 2020; CV of the standard errors 0.05, alpha 0.05)")
-
-# Convergence of the imputation chains
-rhat <- rbindlist(lapply(names(mode_res), function(m)
-  cbind(sample = m, as.data.table(miceadds::Rhat.mice(mode_res[[m]]$imp$mids)))))
-n_rhat <- rhat[Rhat.M.imp > 1.1 | Rhat.Var.imp > 1.1, .N]
-
-rhat_long <- melt(rhat, id.vars = c("sample", "variable"), measure.vars = c("Rhat.M.imp", "Rhat.Var.imp"),
-                  variable.name = "statistic", value.name = "rhat")
-rhat_long[, statistic := fifelse(statistic == "Rhat.M.imp", "chain means", "chain variances")]
-rhat_long <- rhat_long[!is.na(rhat)]                       # variables that are not imputed have no R-hat
-rhat_lbl  <- imp_lbl   # labels from chunk rv1-imputation
-rhat_long[, variable  := fifelse(as.character(variable) %chin% names(rhat_lbl), rhat_lbl[as.character(variable)],
-                                 vapply(as.character(variable), lbl, character(1)))]
-rhat_long[, sample    := mode_title[sample]]
-
-fig <- ggplot(rhat_long, aes(x = rhat, y = variable, shape = statistic)) +
-  geom_vline(xintercept = 1.1, linetype = "dashed", linewidth = .25) +
-  geom_point(size = 1.8) +
-  scale_shape_manual(values = c(16, 1), name = "") +
-  facet_wrap(~ sample, nrow = 1) +
-  labs(x = "R-hat", y = NULL) +
-  theme_classic(base_size = 11) +
-  theme(
-    legend.position  = "bottom",
-    axis.line        = element_line(linewidth = .25),
-    axis.ticks       = element_line(linewidth = .25),
-    strip.background = element_blank(),
-    text             = element_text(family = "Times New Roman")
-  )
-
-PATH <- file.path(DIR_APP, "imputation_rhat.png")
-ggsave(PATH, fig, dpi = 300, width = 8, height = 6)
-fwrite(rhat_long, sub("png$", "csv", PATH))   # values shown in the figure
-knitr::include_graphics(PATH, dpi = 300)
 ```
 
-Largest number of imputations needed: **`r m_max`** (used: `r imp_m$m`). Variables with R-hat above 1.1: **`r n_rhat`** (iterations: `r imp_m$iteration`). If the first number exceeds the imputations used, raise `m_imp` in `run_outcome()`; if variables exceed 1.1, raise `maxit_imp`; then render once with `reimpute = TRUE`.
+Largest number of imputations needed: **`r m_max`** (used: `r imp_m$m`).
 
-## Pairwise correlations of social and provisioning items
+### D.5 Observed vs imputed values
 
-```{r rv1-tetrachoric}
-tc_vars <- c(SOCIAL, PROVISIONING)
-tc_d <- prep(md[!is.na(fies_cat_gesamt)], "gesamt")
-tc <- tryCatch(psych::tetrachoric(as.data.frame(tc_d[, ..tc_vars]),
-                                  weight = tc_d$ctrl_weight, na.rm = TRUE)$rho,
-               error = function(e) psych::tetrachoric(as.data.frame(tc_d[, ..tc_vars]), na.rm = TRUE)$rho)
-tc_tab <- data.table(item = vapply(rownames(tc), lbl, character(1)), round(tc, 2))
-setnames(tc_tab, c("item", vapply(colnames(tc), lbl, character(1))))
-kable(tc_tab, caption = "Tetrachoric correlations of social and provisioning items")
+```{r rv1-imputation-compare}
+# Observed vs imputed values
+imp_cmp <- rbindlist(lapply(imp_info[n_missing > 0 & !method %in% c("", "not imputed"), variable], function(v) {
+  obs   <- imp_m$data[[v]][!is.na(imp_m$data[[v]])]
+  iv    <- unlist(lapply(imp_m$imp[[v]], as.character))
+  n_mis <- sum(is.na(imp_m$data[[v]]))
+  if (is.numeric(obs) && uniqueN(obs) > 2) {
+    data.table(variable = lbl_imp(v), level = "mean", `n missing` = n_mis,
+               observed = round(mean(obs), 2), imputed = round(mean(as.numeric(iv)), 2))
+  } else {
+    lv  <- sort(unique(as.character(obs)))
+    out <- data.table(variable = lbl_imp(v), level = lv, `n missing` = n_mis,
+                      observed = round(as.numeric(prop.table(table(factor(as.character(obs), lv)))) * 100, 1),
+                      imputed  = round(as.numeric(prop.table(table(factor(iv, lv)))) * 100, 1))
+    if (identical(lv, c("0", "1"))) out[level == "1"] else out   # binary items: share of 1 only
+  }
+}))
+imp_cmp[, `observed - imputed` := round(observed - imputed, 2)]
+kable(imp_cmp, caption = paste("Imputation: observed vs imputed values (% or mean; binary items: share of 1);",
+                               "n missing = imputed cases per dataset (full sample)"))
+
+num_vars <- imp_info[n_missing > 0 & !method %in% c("", "not imputed") &
+                     variable %in% c("ih_dem_age", "com_walk_dist"), variable]
+if (length(num_vars)) {
+  png(file.path(DIR_APP, "imputation_density.png"), width = 2000, height = 1000, res = 200)
+  print(tryCatch(lattice::densityplot(imp_m, as.formula(paste("~", paste(num_vars, collapse = " + ")))),
+                 error = function(e) NULL))
+  invisible(dev.off())
+}
+if (length(num_vars)) knitr::include_graphics(file.path(DIR_APP, "imputation_density.png"), dpi = 200)
 ```
 
-## Rasch validation by mode
+## E. Results 4.2
 
-```{r rv1-rasch}
-rasch_summary <- rbindlist(lapply(names(rasch_val), function(m) data.table(
-  Sample = m, `n valid` = rasch_val[[m]]$n_valid,
-  `Rasch reliability` = round(rasch_val[[m]]$reliability, 3),
-  `Residual correlations > 0.4` = nrow(rasch_val[[m]]$rescorr_04))))
-kable(rasch_summary, caption = "Rasch validation by sample")
-rasch_tabs <- lapply(rasch_val, function(x) as.data.table(x$items))
-```
+### E.1 Figure 5 among the respondents who were asked
 
-## Figure 5 among the respondents who were asked
-
-Shares among the FI-module respondents who want to change their diet (filter question f30); the figure in
-the main text uses all FI-module respondents (n = 165) as base.
+*Reviewer 2, major 6: shares among the FI-module respondents who want to change their diet (filter question f30); the figure in the main text uses all FI-module respondents (n = 165) as base.*
 
 ```{r fig5-asked}
-make_flextable(fig5_101_tab)
+kable(fig5_101_tab, caption = "Figure 5 among the respondents who were asked (wish to change the diet)")
 ```
 
 ## Export
 
 ```{r rv1-export}
 rv1_tables <- c(
-  list("Raking targets (weighted margins of the full sample, n = 2004)" = rake_targets,
-       "Weights by survey mode: effective sample sizes and weighted mode shares" = w_diag,
-       "Sample composition by survey mode (%; unweighted, base weight, raked weight)" = comp_by_mode,
-       "Excluded respondents by survey mode (incomplete FIES or missing household size)" = fies_missing_by_mode,
-       "Missing FIES responses by item and survey mode" = fies_item_missing,
-       "Excluded vs retained respondents (base-weighted %, design-based chi-square)" = excl_compare,
-       "FI-specific module: eligible vs received" = module_cov,
-       "FI-specific module: FIES answer pattern by module receipt (% affirming each item)" = module_pattern,
-       "FI-specific module: raw score of eligible respondents by module receipt" = module_rawscore,
-       "Moderate/severe respondents without the FI-specific module, by characteristics" = missed_compare,
-       "Table 3 items among moderate/severe respondents, by module receipt (observed values, %)" = module_domains,
-       "Sensitivity of the pooled prevalence (moderate+severe, %)" = sens,
-       "IH-adjusted gradients estimated separately by survey mode" = grad,
-       "Imputation: missingness and method per variable" =
+  list("A.1 Raking targets (weighted margins of the full sample, n = 2004)" = rake_targets,
+       "A.1 Weights by survey mode: effective sample sizes and weighted mode shares" = w_diag,
+       "A.1 Sample composition by survey mode (%; unweighted, base weight, raked weight)" = comp_by_mode,
+       "A.3 FI-specific module: eligible vs received" = module_cov,
+       "A.3 FI-specific module: FIES answer pattern by module receipt (% affirming each item)" = module_pattern,
+       "A.3 FI-specific module: raw score of eligible respondents by module receipt" = module_rawscore,
+       "A.3 Moderate/severe respondents without the FI-specific module, by characteristics" = missed_compare,
+       "A.3 Table 3 items among moderate/severe respondents, by module receipt (observed values, %)" = module_domains,
+       "B.1 Rasch validation by sample" = rasch_summary),
+  setNames(rasch_tabs, paste0("B.1 Rasch item parameters and fit - ", mode_title[tolower(names(rasch_tabs))],
+                              " (shares relative to the mode-specific validation sample)")),
+  list("B.2 Excluded respondents by survey mode (incomplete FIES or missing household size)" = fies_missing_by_mode,
+       "B.2 Missing FIES responses by item and survey mode" = fies_item_missing,
+       "B.2 Excluded vs retained respondents (base-weighted %, design-based chi-square)" = excl_compare,
+       "B.3 Pooled and mode-specific prevalence with 95% CI (pooled calibration)" = prev_ci,
+       "B.3 Sensitivity of the pooled prevalence (moderate+severe, %)" = sens,
+       "B.4 Mode difference (online vs phone), PPC [95% CI] (Table 2 specification)" = strip_internal(mode_rows),
+       "B.4 IH-adjusted gradients estimated separately by survey mode" = grad,
+       "C.2 Tetrachoric correlations of social and provisioning items (base weight)" = tc_tab,
+       "D.1 Imputation: missingness and method per variable" =
          imp_info[n_missing > 0, .(variable = label, n_missing, `missing %`, method)],
-       "Imputation: observed vs imputed values" = imp_cmp,
-       "Missing values of the imputed covariates by survey mode" = mis_mode,
-       "Respondents with at least one missing covariate vs complete respondents" = mis_compare,
-       "Imputation: number of imputations needed (von Hippel 2020)" = imp_check,
-       "Imputation: convergence (R-hat)" = rhat,
-       "Tetrachoric correlations of social and provisioning items (base weight)" = tc_tab,
-       "Figure 5 among the respondents who were asked (wish to change the diet)" = fig5_101_tab),
-  setNames(rasch_tabs, paste0("Rasch item parameters and fit - ", names(rasch_tabs),
-                              " (shares relative to the mode-specific validation sample)")))
+       "D.2 Missing values of the imputed covariates by survey mode" = mis_mode,
+       "D.2 Respondents with at least one missing covariate vs complete respondents" = mis_compare,
+       "D.3 Imputation: convergence (R-hat)" = rhat,
+       "D.4 Imputation: number of imputations needed (von Hippel 2020)" = imp_check,
+       "D.5 Imputation: observed vs imputed values" = imp_cmp,
+       "E.1 Figure 5 among the respondents who were asked (wish to change the diet)" = fig5_101_tab))
 
 doc <- new_landscape_doc()
 for (k in seq_along(rv1_tables)) {
