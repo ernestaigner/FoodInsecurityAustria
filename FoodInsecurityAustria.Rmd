@@ -66,8 +66,8 @@ parameters (BOX/GES/FIGH/WRAP/...).
 Added (section "Technical appendix")
  - raking targets and weight diagnostics; composition by mode
  - missing FIES items by mode; the 180 exclusions compared with retained cases
- - FI-module coverage (programming error, 22 cases): by mode, characteristics, FIES answer
-   pattern and Table 3 items
+ - FI-module coverage (programming error, 22 cases): by mode and raw score; characteristics and
+   Table 3 items of the moderate/severe phone respondents without the module
  - sensitivity of the pooled prevalence (weights, mode shares, calibration)
  - numbers for the survey-mode paragraph; gradient concordance across modes
  - imputation diagnostics: trace plots, observed vs imputed values (with n missing and
@@ -2653,10 +2653,11 @@ kable(overview_table, caption = "Variable overview (full analytic sample, unweig
 *Reviewer 2, major 3: the 22 respondents without the FI-specific module.*
 
 The FI-specific module was meant to be shown to every respondent affirming at least one FIES item. All
-eligible online respondents received it; the omission occurred only in the phone survey. The respondents who
-did not receive it are therefore compared with those who did **within the phone sample**: FIES answer pattern,
-characteristics and the Table 3 items (which all respondents answered). Interview dates are not available.
-With 22 vs 17 moderate/severe phone respondents the comparison is descriptive; the tests have little power.
+eligible online respondents received it; the omission occurred only in the phone survey. The first table shows
+eligible and missed respondents by mode, for moderate/severe FI and for each raw score (number of FIES items
+affirmed). The second compares the moderate/severe phone respondents who missed the module with those who
+received it, by characteristics and Table 3 items (which all respondents answered); the Fisher test is computed
+within these 39 phone respondents and has little power. Interview dates are not available.
 
 ```{r rv1-module-coverage}
 # Received = f14 answered (same definition as descr_sample).
@@ -2664,64 +2665,41 @@ mc <- prep(md, "gesamt")[, c("id", "ctrl_method", "fies_low", "fies_cat_gesamt",
 mc[, mode := as.character(ctrl_method)]
 mc[, received := !is.na(dt[match(mc$id, dt$id), f14])]
 mc[, w_base := dt[match(mc$id, dt$id), weight]]
+mc[, raw_score := rowSums(as.data.table(lapply(dt[match(mc$id, dt$id), paste0("f9_", 1:8), with = FALSE], fun.x)))]
+mc[, mod_sev := fies_cat_gesamt %in% "moderate"]   # moderate includes severe in md
 
-# FIES answers (1 = yes), raw score and severity (severe is collapsed into moderate in md)
-FIES_LABELS <- c("WORRIED", "HEALTHY", "FEWFOOD", "SKIPPED", "ATELESS", "RUNOUT", "HUNGRY", "WHLDAY")
-mc[, (FIES_LABELS) := lapply(dt[match(mc$id, dt$id), paste0("f9_", 1:8), with = FALSE], fun.x)]
-mc[, raw_score := rowSums(.SD), .SDcols = FIES_LABELS]
-mc[, severity := dt[match(mc$id, dt$id), fies_cat_gesamt]]
-mc[, fies_group := fcase(fies_cat_gesamt == "moderate", "moderate/severe",
-                         fies_low == TRUE,              "mild (below the threshold)")]
-mc[, module := fifelse(received, "received", "missed")]
+# Eligible and missed by mode: moderate/severe and each raw score
+cov_wide <- function(x, group) x[, .(
+  group                       = group,
+  `eligible online`           = sum(mode == "online"),
+  `missed online`             = sum(mode == "online" & !received),
+  `eligible phone`            = sum(mode == "phone"),
+  `missed phone`              = sum(mode == "phone" & !received),
+  `missed % phone (weighted)` = round(sum(w_base[mode == "phone" & !received]) / sum(w_base[mode == "phone"]) * 100, 1),
+  `missed total`              = sum(!received))]
+module_cov <- rbind(cov_wide(mc[mod_sev == TRUE], "moderate/severe"),
+                    rbindlist(lapply(1:8, function(k) cov_wide(mc[fies_low == TRUE & raw_score == k], paste("raw score", k)))))
+kable(module_cov, caption = "FI-specific module: eligible and missed respondents by survey mode")
 
-# Eligible vs received by mode (counts and base-weighted share missed)
-cov_tab <- function(x, group) rbind(x, copy(x)[, mode := "total"])[
-  , .(group = group, eligible = .N, received = sum(received), missed = sum(!received),
-      `missed % (weighted)` = round(sum(w_base[!received]) / sum(w_base) * 100, 1)), by = mode]
-module_cov <- rbind(
-  cov_tab(mc[fies_group == "moderate/severe"], "moderate/severe"),
-  cov_tab(mc[fies_group == "mild (below the threshold)"], "mild (below the threshold)"))
-setcolorder(module_cov, "group")
-kable(module_cov, caption = "FI-specific module: eligible vs received")
-
-# Comparisons within the phone sample (online: no omissions)
-mp <- mc[mode == "phone" & fies_low == TRUE]
-
-# FIES answer pattern of eligible phone respondents: % affirming each item, raw score, % severe
-module_pattern <- mp[,
-  c(.(n = .N, `raw score (mean)` = round(mean(raw_score), 1),
-      `severe %` = round(mean(severity == "severe") * 100, 1)),
-    lapply(.SD, function(x) round(mean(x) * 100, 1))),
-  by = .(fies_group, module), .SDcols = FIES_LABELS][order(fies_group, module)]
-kable(module_pattern, caption = "FIES answer pattern by module receipt, phone sample (% affirming each item)")
-
-module_rawscore <- dcast(mp[, .N, by = .(raw_score, module)],
-                         raw_score ~ module, value.var = "N", fill = 0)
-kable(module_rawscore, caption = "Raw score of eligible phone respondents by module receipt")
-
-# Who did not receive it? Moderate/severe phone respondents, by characteristics
-mm <- mp[fies_group == "moderate/severe"]
-missed_compare <- rbindlist(lapply(c("severity", comp_vars), function(v) {
-  x <- mm[!is.na(get(v)), .(n = .N, missed = sum(!received)), by = .(level = as.character(get(v)))]
-  x[, `:=`(variable = lbl(v), `missed %` = round(missed / n * 100, 1))]
-  x[, p_fisher := fmt_pval3(tryCatch(fisher.test(table(mm[[v]], mm$received))$p.value,
-                                     error = function(e) NA_real_))]
-  setcolorder(x, "variable")[]
+# Characteristics and Table 3 items: FIES analytic sample by mode; moderate/severe phone respondents without the module
+mcs <- mc[!is.na(fies_cat_gesamt)]
+module_compare <- rbindlist(lapply(c(comp_vars, ALWAYS_FOOD_ENV), function(v) {
+  x  <- mcs[!is.na(get(v)), .(mode, mod_sev, received, level = get(v))]
+  ph <- x[mode == "phone" & mod_sev == TRUE]
+  p  <- tryCatch(fisher.test(table(ph$level, ph$received))$p.value, error = function(e) NA_real_)
+  out <- x[, .(n                     = .N,
+               `n online`            = sum(mode == "online"),
+               `n phone`             = sum(mode == "phone"),
+               `mod/sev online`      = sum(mode == "online" & mod_sev),
+               `mod/sev phone`       = sum(mode == "phone" & mod_sev),
+               `phone: not received` = sum(mode == "phone" & mod_sev & !received)), by = level][order(level)]
+  out[, `phone: not received %` := round(`phone: not received` / `mod/sev phone` * 100, 1)]
+  out[, level := as.character(level)]
+  if (v %chin% ALWAYS_FOOD_ENV) out <- out[level == "1"][, level := "yes"]   # binary items: row for "yes"
+  out[, `:=`(variable = lbl(v), p_fisher = fmt_pval3(p))]
+  setcolorder(out, "variable")[]
 }))
-kable(missed_compare, caption = "Moderate/severe phone respondents without the FI-specific module, by characteristics")
-
-# Table 3 items (asked to all respondents): moderate/severe phone respondents who missed vs received the module
-module_domains <- rbindlist(lapply(ALWAYS_FOOD_ENV, function(v) {
-  x <- mm[!is.na(get(v)), .(module, y = as.numeric(as.character(get(v))))]
-  data.table(item         = lbl(v),
-             `n missed`   = x[module == "missed", .N],
-             `% missed`   = x[module == "missed", round(mean(y) * 100, 1)],
-             `n received` = x[module == "received", .N],
-             `% received` = x[module == "received", round(mean(y) * 100, 1)],
-             p_fisher     = fmt_pval3(tryCatch(fisher.test(table(x$y, x$module))$p.value,
-                                               error = function(e) NA_real_)))
-}))
-kable(module_domains, caption = "Table 3 items among moderate/severe phone respondents, by module receipt (observed values, %)")
+kable(module_compare, caption = "FI-specific module: characteristics and Table 3 items by survey mode; moderate/severe phone respondents without the module (n, % of mod/sev phone; Fisher test within mod/sev phone)")
 ```
 
 ## B. FIES: validation and prevalence
@@ -3136,11 +3114,8 @@ rv1_tables <- c(
   list("A.1 Raking targets (weighted margins of the full sample, n = 2004)" = rake_targets,
        "A.1 Weights by survey mode: effective sample sizes and weighted mode shares" = w_diag,
        "A.1 Sample composition by survey mode (%; unweighted, base weight, raked weight)" = comp_by_mode,
-       "A.3 FI-specific module: eligible vs received" = module_cov,
-       "A.3 FI-specific module: FIES answer pattern by module receipt, phone sample (% affirming each item)" = module_pattern,
-       "A.3 FI-specific module: raw score of eligible phone respondents by module receipt" = module_rawscore,
-       "A.3 Moderate/severe phone respondents without the FI-specific module, by characteristics" = missed_compare,
-       "A.3 Table 3 items among moderate/severe phone respondents, by module receipt (observed values, %)" = module_domains,
+       "A.3 FI-specific module: eligible and missed respondents by survey mode" = module_cov,
+       "A.3 FI-specific module: characteristics and Table 3 items by survey mode; moderate/severe phone respondents without the module" = module_compare,
        "B.1 Rasch validation by sample" = rasch_summary),
   setNames(rasch_tabs, paste0("B.1 Rasch item parameters and fit - ", mode_title[tolower(names(rasch_tabs))],
                               " (shares relative to the mode-specific validation sample)")),
