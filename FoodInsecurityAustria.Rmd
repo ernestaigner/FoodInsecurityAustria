@@ -56,10 +56,19 @@ options(future.globals.maxSize = 2 * 1024^3)
 ## Point Function
 point <- format_format(big.mark = " ", decimal.mark = ".", scientific = FALSE)
 
+# Folders (relative to this repository: FoodInsecurity/analysis/FoodInsecurityAustria)
+DIR_DATA <- "../../data"        # survey data (never in git)
+DIR_FIES <- "../../FIES"        # FIES calibration workbooks (Excel round trip)
+DIR_DIST <- "../../distances"   # walking distances by municipality
+DIR_TAB  <- "../../tables"      # manuscript tables, variable overview
+DIR_APP  <- "../../appendix"    # technical-appendix tables and diagnostics
+DIR_FIG  <- "../../figures"     # figures
+for (d in c(DIR_TAB, DIR_APP, DIR_FIG)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+
 # Datei mit daten
-FILENAME="data_expl.xlsx"
+FILENAME <- file.path(DIR_DATA, "data_expl.xlsx")
 # Datei mit Methode
-FILENAME2="data.xlsx"
+FILENAME2 <- file.path(DIR_DATA, "data.xlsx")
 
 FSIZE=15
 
@@ -388,16 +397,16 @@ rrh <- RM.w(as.matrix(dtfao[kalib==T,grep("f9_",names(dtfao)),with=F])
                               country="AT_FS_HS")
 
 ## to calibrate in Excel write excel file
-wb <- loadWorkbook("FIES/FIES_tmpl.xlsx")
+wb <- loadWorkbook(file.path(DIR_FIES, "FIES_tmpl.xlsx"))
 writeData(wb,sheet = 1,startCol = 3,startRow = 28,x = rr$b)
 writeData(wb,sheet = 1,startCol = 6,startRow = 27,x = rr$a)
 writeData(wb,sheet = 1,startCol = 7,startRow = 27,x = rr$se.a)
 writeData(wb,sheet = 1,startCol = 8,startRow = 27,x = rrh$wt.rs)
-saveWorkbook(wb,file = paste0("FIES/FIES_",SAMPLE,".xlsx"),overwrite = T)
+saveWorkbook(wb,file = file.path(DIR_FIES, paste0("FIES_",SAMPLE,".xlsx")),overwrite = T)
 
 
 ## read excel file after calibration
-wb <- loadWorkbook(paste0("FIES/FIES_",SAMPLE,"c.xlsx"))
+wb <- loadWorkbook(file.path(DIR_FIES, paste0("FIES_",SAMPLE,"c.xlsx")))
 # system(paste0("open FIES/FIES_",SAMPLE,"c.xlsx"))
 ## Indicators
 # 13. NA cases
@@ -492,7 +501,7 @@ tmp <- data.table(label=c("WORRIED","HEALTHY","FEWFOOD","SKIPPED","ATELESS","RAN
            outfit=round(AT_VAL$outfit,2),
 `affirmitive responses`= aff_res,
 `affirmitive responses (share)`= round(aff_res/346*100,2))
-write.table(tmp, "FIES/item_parameters_online.csv", sep="\t", row.names=FALSE)
+write.table(tmp, file.path(DIR_FIES, "item_parameters_online.csv"), sep="\t", row.names=FALSE)
 ## Residual correclation
 abs(AT_VAL$res.corr)>.4
 ## rasch reliab
@@ -511,16 +520,16 @@ rrh <- RM.w(as.matrix(dtfao[kalib==T,grep("f9_",names(dtfao)),with=F])
                               country="AT_FS_HS")
 
 ## calibrate in Excel
-wb <- loadWorkbook("FIES/FIES_tmpl.xlsx")
+wb <- loadWorkbook(file.path(DIR_FIES, "FIES_tmpl.xlsx"))
 writeData(wb,sheet = 1,startCol = 3,startRow = 28,x = rr$b)
 writeData(wb,sheet = 1,startCol = 6,startRow = 27,x = rr$a)
 writeData(wb,sheet = 1,startCol = 7,startRow = 27,x = rr$se.a)
 writeData(wb,sheet = 1,startCol = 8,startRow = 27,x = rrh$wt.rs)
-saveWorkbook(wb,file = paste0("FIES/FIES_",SAMPLE,".xlsx"),overwrite = T)
+saveWorkbook(wb,file = file.path(DIR_FIES, paste0("FIES_",SAMPLE,".xlsx")),overwrite = T)
 
 
 ## read excel file after calibration
-wb <- loadWorkbook(paste0("FIES/FIES_",SAMPLE,"c.xlsx"))
+wb <- loadWorkbook(file.path(DIR_FIES, paste0("FIES_",SAMPLE,"c.xlsx")))
 
 ## Indicators
 # 13. NA cases
@@ -616,7 +625,7 @@ tmp <- data.table(label=c("WORRIED","HEALTHY","FEWFOOD","SKIPPED","ATELESS","RAN
            outfit=round(AT_VAL$outfit,2),
 `affirmitive responses`= aff_res,
 `affirmitive responses (share)`= round(aff_res/346*100,2))
-write.table(tmp, "FIES/item_paramesters_telefon.csv", sep="\t", row.names=FALSE)
+write.table(tmp, file.path(DIR_FIES, "item_paramesters_telefon.csv"), sep="\t", row.names=FALSE)
 ## Residual correclation
 abs(AT_VAL$res.corr)>.4
 ## rasch reliab
@@ -635,16 +644,16 @@ rrh <- RM.w(as.matrix(dtfao[kalib==T,grep("f9_",names(dtfao)),with=F])
                               country="AT_FS_HS")
 
 ## calibrate in Excel
-wb <- loadWorkbook("FIES/FIES_tmpl.xlsx")
+wb <- loadWorkbook(file.path(DIR_FIES, "FIES_tmpl.xlsx"))
 writeData(wb,sheet = 1,startCol = 3,startRow = 28,x = rr$b)
 writeData(wb,sheet = 1,startCol = 6,startRow = 27,x = rr$a)
 writeData(wb,sheet = 1,startCol = 7,startRow = 27,x = rr$se.a)
 writeData(wb,sheet = 1,startCol = 8,startRow = 27,x = rrh$wt.rs)
-saveWorkbook(wb,file = paste0("FIES/FIES_",SAMPLE,".xlsx"),overwrite = T)
+saveWorkbook(wb,file = file.path(DIR_FIES, paste0("FIES_",SAMPLE,".xlsx")),overwrite = T)
 
 
 ## read excel file after calibration
-wb <- loadWorkbook(paste0("FIES/FIES_",SAMPLE,"c.xlsx"))
+wb <- loadWorkbook(file.path(DIR_FIES, paste0("FIES_",SAMPLE,"c.xlsx")))
 
 ## Indicators
 # 13. NA cases
@@ -1018,8 +1027,8 @@ md[, ip_sn_knows_fp := fcase(
 ### Community: Gehdistanz zum Lebensmittelhandel (com_walk_dist)
 
 ```{r com_walk_dist}
-gem <- data.table(read_excel("distances/ortsliste.xls",skip = 3))[1:(.N-2)][,id:=1:.N][,str_split(Postleitzahl," "),.(`Gemeinde kennziffer`,id)][,.(g_id=as.numeric(`Gemeinde kennziffer`),plz=as.numeric(V1))][,unique(.SD)]
-walk <- fread("distances/walk_car.csv")[,.(g_id,g_name,walk23_mean,pop)]
+gem <- data.table(read_excel(file.path(DIR_DIST, "ortsliste.xls"),skip = 3))[1:(.N-2)][,id:=1:.N][,str_split(Postleitzahl," "),.(`Gemeinde kennziffer`,id)][,.(g_id=as.numeric(`Gemeinde kennziffer`),plz=as.numeric(V1))][,unique(.SD)]
+walk <- fread(file.path(DIR_DIST, "walk_car.csv"))[,.(g_id,g_name,walk23_mean,pop)]
 
 gem <- rbind(gem, walk[grep("^9", g_id),
                        .(g_id, plz = as.integer(paste0(1, sprintf("%02d", 1:23), 0)))])
@@ -2157,7 +2166,7 @@ overview_table <- var_overview(ov_data, intersect(ov_vars, names(ov_data)))
 write_tables_to_word(
   table_list  = list(overview_table),
   table_names = list("Table 1. Variable overview (gesamt analytic sample, unweighted, pre-imputation). Numeric/binary variables: mean/median/SD/min/max; binary indicators are coded 0/1 so the mean is the prevalence. Factors: N, NA and level counts."),
-  output_path = "variable_overview.docx")
+  output_path = file.path(DIR_TAB, "variable_overview.docx"))
 
 print(overview_table)
 ```
@@ -2200,8 +2209,8 @@ tbls <- list(s$t2, s$t3, s$vif)
   }
   first <- FALSE
 }
-print(doc, target = "lund_appendix_all.docx")
-message("Saved appendix to: lund_appendix_all.docx")
+print(doc, target = file.path(DIR_TAB, "lund_appendix_all.docx"))
+message("Saved appendix to: ", file.path(DIR_TAB, "lund_appendix_all.docx"))
 
 # ---- Manuscript Tables 2 & 3 (gesamt, 20-imputation; N (NA) stripped) -------
 drop_na_col <- function(tbl) {
@@ -2215,8 +2224,8 @@ write_tables_to_word(
   table_names = list(
     "Table 2: Prevalence (Rasch probability) of FI in total and with respect to individual/household factors.",
     "Table 3: Prevalence of motives, social and food provisioning environments among individuals in food-secure and food-insecure households."),
-  output_path = "manuscript_tables.docx")
-message("Saved manuscript to: manuscript_tables.docx")
+  output_path = file.path(DIR_TAB, "manuscript_tables.docx"))
+message("Saved manuscript to: ", file.path(DIR_TAB, "manuscript_tables.docx"))
 
 print(lund_out[["gesamt"]]$t2)
 print(lund_out[["gesamt"]]$t3)
@@ -2446,7 +2455,7 @@ ggplot(plotdat, aes(x = value, y = metric)) +
 
 TITLE <- "gender_shares"
 
-PATH <- paste0(getwd(),"/plots_june2026/",TITLE,"2.png"); ggsave(PATH, dpi = 300, width = 6, height = 3); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
+PATH <- file.path(DIR_FIG, paste0(TITLE,"2.png")); ggsave(PATH, dpi = 300, width = 6, height = 3); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
 ```
 
 ## social participation
@@ -2527,7 +2536,7 @@ ggplot(tab_f22, aes(x = pct, y = "", fill = category)) +
 
 TITLE <- "participation"
 
-PATH <- paste0(getwd(),"/plots_june2026/",TITLE,"2.png"); ggsave(PATH, dpi = 300, width = 6, height = 1.75); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
+PATH <- file.path(DIR_FIG, paste0(TITLE,"2.png")); ggsave(PATH, dpi = 300, width = 6, height = 1.75); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
 ```
 
 ### meeting others — perceived (f23)
@@ -2578,7 +2587,7 @@ ggplot(tab_f23, aes(x = pct, y = "", fill = category)) +
 
 TITLE <- "perceived_participation"
 
-PATH <- paste0(getwd(),"/plots_june2026/",TITLE,"2.png"); ggsave(PATH, dpi = 300, width = 6, height = 1.75); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
+PATH <- file.path(DIR_FIG, paste0(TITLE,"2.png")); ggsave(PATH, dpi = 300, width = 6, height = 1.75); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
 ```
 
 ## priorities over time (f14)
@@ -2712,7 +2721,7 @@ ggplot(tab, aes(y = qlb, x = value)) +
     axis.title      = element_text(size = 11 * .7)
   )
 
-PATH <- "plots/supermarket_activities.png"
+PATH <- file.path(DIR_FIG, "supermarket_activities.png")
 ggsave(PATH, width = 5, height = 3, dpi = 300)
 ```
 
@@ -2945,7 +2954,7 @@ dtl[descr_sample==T&grepl("f28",qid),.N,.(qlb,itlb)]
 
 TITLE <- "reasons"
 
-PATH <- paste0(getwd(),"/plots_june2026/",TITLE,"2.png"); ggsave(PATH, dpi = 300, width = 6, height = 4); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
+PATH <- file.path(DIR_FIG, paste0(TITLE,"2.png")); ggsave(PATH, dpi = 300, width = 6, height = 4); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
 ```
 
 
@@ -3114,6 +3123,6 @@ ggplot(tab, aes(y = qlb, x = value, fill = itgroup)) +
 
 TITLE <- "needs"
 
-PATH <- paste0(getwd(),"/plots_june2026/",TITLE,"2.png"); ggsave(PATH, dpi = 300, width = 7, height = 5); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
+PATH <- file.path(DIR_FIG, paste0(TITLE,"2.png")); ggsave(PATH, dpi = 300, width = 7, height = 5); system(paste0("osascript -e 'set the clipboard to (read (POSIX file \"", PATH, "\") as JPEG picture)'"))
 ```
 
